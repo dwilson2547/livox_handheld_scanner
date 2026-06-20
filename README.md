@@ -1,0 +1,67 @@
+# livox_handheld_scanner
+
+Live LiDAR-inertial handheld 3D mapping rig built around a **Livox Horizon**, with
+real-time coverage feedback and parallel rosbag logging for offline print-quality
+refinement.
+
+This is a **scaffold / starter repo**. Several nodes are deliberately stubbed and
+marked `TODO(copilot)` — see `docs/HANDOFF.md` for the full implementation brief.
+
+## Hardware
+
+| Item | Part | Role |
+|------|------|------|
+| LiDAR | Livox Horizon | Primary 3D sensor (non-repetitive scan) |
+| IMU | Horizon built-in **BMI088** | LIO attitude source (already time-synced to LiDAR clock) |
+| Camera | Intel RealSense D435i | Colorization / visual cross-check only — **IMU NOT used** |
+| Compute | NUC-class x86, Ubuntu 22.04 | Live capture + LIO + meshing |
+
+**Sensors deliberately dropped from the LIO pipeline:** WT901C (poor sync) and the
+D435i's BMI055 (weak, internally unsynced gyro/accel). Do not re-add them.
+
+## Software stack
+
+- **OS / middleware:** Ubuntu 22.04 + ROS 2 Humble
+- **Driver:** `livox_ros2_driver` (SDK1 — required for the Horizon; NOT `livox_ros_driver2`, which is HAP/Mid-360 only)
+- **Odometry:** Point-LIO (point-by-point iEKF, handles aggressive hand motion better than FAST-LIO2)
+- **Meshing:** VDBFusion TSDF integrator (live incremental surface)
+- **Coverage:** custom node — per-voxel observation density + LIO health
+- **Viewer:** Foxglove Studio (coverage heatmap + health indicator)
+- **Logging:** parallel `ros2 bag` of raw topics for offline pose-graph refinement
+
+See `docs/ARCHITECTURE.md` for the node graph and `docs/HANDOFF.md` for the build-out plan.
+
+## ⚠️ Critical hardware/driver note — read before building
+
+The **Horizon is an SDK1 device.** The widely-documented `livox_ros_driver2` only
+supports HAP and Mid-360 and **will not drive a Horizon.** This repo uses
+`livox_ros2_driver` instead. The practical consequences:
+
+- CustomMsg type is `livox_interfaces/msg/CustomMsg`, **not** `livox_ros_driver2/msg/CustomMsg`.
+- Stock Point-LIO ROS2 forks expect the driver2 message type and must be patched to
+  accept the SDK1 message. This is the single biggest integration risk — see HANDOFF §4.
+
+## Quick start (once dependencies are vendored — see HANDOFF §2)
+
+```bash
+# build
+cd ~/ros2_ws && colcon build --symlink-install
+source install/setup.bash
+
+# bring up the full live pipeline (driver + point-lio + meshing + coverage + bag)
+ros2 launch scanner_bringup scanner.launch.py
+
+# config-portal / dry run without hardware (plays a bag instead of the live driver)
+ros2 launch scanner_bringup scanner.launch.py use_bag:=true bag_path:=/path/to/session
+```
+
+## Repo layout
+
+```
+src/scanner_bringup/    launch files, sensor configs, rviz/foxglove layouts
+src/scanner_coverage/   coverage node (per-voxel density + LIO health)  [STUB]
+src/scanner_meshing/    VDBFusion wrapper node                          [STUB]
+docs/                   ARCHITECTURE.md, HANDOFF.md, SETUP.md
+scripts/                env setup, extrinsic calibration helpers
+foxglove/               operator layout JSON
+```

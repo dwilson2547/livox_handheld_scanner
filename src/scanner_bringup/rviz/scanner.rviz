@@ -1,0 +1,14 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Fixed Frame: camera_init
+  Displays:
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Coverage
+      Topic:
+        Value: /scanner/coverage
+    - Class: rviz_default_plugins/Marker
+      Name: Mesh
+      Topic:
+        Value: /scanner/mesh

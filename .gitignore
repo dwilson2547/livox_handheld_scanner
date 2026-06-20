@@ -1,0 +1,25 @@
+# colcon
+build/
+install/
+log/
+
+# vendored external deps (cloned by setup_workspace.sh, not committed)
+src/Livox-SDK/
+src/livox_ros2_driver/
+src/point_lio/
+
+# capture data
+sessions/
+*.bag
+*.db3
+*.ply
+*.pcd
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# editor
+.vscode/
+.idea/

@@ -1,0 +1,22 @@
+{
+  "_comment": "livox_ros2_driver config for the Horizon (SDK1). TODO(copilot): set the real broadcast_code from the back of YOUR Horizon unit. The broadcast code is 14 serial chars + 1 extra char = 15 chars total.",
+  "lidar_config": [
+    {
+      "broadcast_code": "REPLACE_WITH_HORIZON_BROADCAST_CODE",
+      "enable_connect": true,
+      "enable_fan": true,
+      "return_mode": 0,
+      "coordinate": 0,
+      "imu_rate": 1,
+      "extrinsic_parameter_source": 0,
+      "_imu_rate_note": "1 = IMU enabled/streaming. Confirm IMU packets appear on /livox/imu; people often miss the Horizon IMU because it's a separate topic from the cloud."
+    }
+  ],
+  "timesync_config": {
+    "enable_timesync": false,
+    "device_name": "/dev/ttyUSB0",
+    "comm_device_type": 0,
+    "baudrate_index": 2,
+    "parity_index": 0
+  }
+}

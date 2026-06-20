@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>scanner_bringup</name>
+  <version>0.1.0</version>
+  <description>Launch files, sensor configs, and viewer layouts for the handheld Livox Horizon scanner.</description>
+  <maintainer email="dan@example.com">Dan</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>scanner_coverage</exec_depend>
+  <exec_depend>scanner_meshing</exec_depend>
+  <!-- vendored externally (see HANDOFF §2): livox_ros2_driver, point_lio -->
+  <exec_depend>foxglove_bridge</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

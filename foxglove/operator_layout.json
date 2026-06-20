@@ -1,0 +1,35 @@
+{
+  "_comment": "Operator layout for live scanning. Import into Foxglove Studio (Layouts -> Import). Connect via foxglove_bridge ws://<nuc-ip>:8765. TODO(copilot): tune the 3D panel color modes once real topic names are confirmed.",
+  "configById": {
+    "3D!coverage": {
+      "title": "Coverage + Mesh",
+      "followTf": "camera_init",
+      "topics": {
+        "/scanner/coverage": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "_note": "intensity 0..1 = coverage completeness; red/low = needs more passes"
+        },
+        "/scanner/mesh": { "visible": true },
+        "/cloud_registered": { "visible": false }
+      }
+    },
+    "Indicator!health": {
+      "title": "Tracking Health",
+      "path": "/scanner/health.data",
+      "_note": "Float32 in [0,1]. Green > 0.4, amber 0.2-0.4, red < 0.2 (see coverage.yaml thresholds)."
+    },
+    "Plot!health": {
+      "title": "Health over time",
+      "paths": [{ "value": "/scanner/health.data", "label": "health" }]
+    }
+  },
+  "layout": {
+    "first": "3D!coverage",
+    "second": { "first": "Indicator!health", "second": "Plot!health", "direction": "column", "splitPercentage": 30 },
+    "direction": "row",
+    "splitPercentage": 70
+  }
+}

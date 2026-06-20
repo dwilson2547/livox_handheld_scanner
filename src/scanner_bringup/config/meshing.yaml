@@ -1,0 +1,23 @@
+# VDBFusion meshing node config.
+meshing:
+  # Input: deskewed, LIO-registered cloud in the map/odom frame.
+  cloud_topic: "/cloud_registered"   # Point-LIO's registered output
+  odom_topic: "/aft_mapped_to_init"  # VERIFY topic name against your Point-LIO fork
+
+  map_frame: "camera_init"           # Point-LIO's world frame name (VERIFY)
+  body_frame: "body"
+
+  # VDBFusion TSDF params
+  voxel_size: 0.02                   # 2 cm -- print-grade-ish; raise for speed
+  sdf_trunc: 0.08                    # truncation distance (~4x voxel)
+  space_carving: true
+
+  # Live meshing cadence (don't mesh every frame; it's expensive)
+  mesh_every_n_clouds: 20
+  min_weight: 2.0                    # min TSDF weight before a voxel is meshed
+
+  # Output
+  mesh_topic: "/scanner/mesh"        # published as visualization_msgs/Marker (TRIANGLE_LIST)
+  publish_mesh: true
+  save_on_shutdown: true
+  save_path: "sessions/mesh_live.ply"
