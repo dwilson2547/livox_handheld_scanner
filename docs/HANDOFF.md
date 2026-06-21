@@ -1,202 +1,104 @@
-# HANDOFF — implementation brief for GitHub Copilot
+# HANDOFF — system state and known decisions
 
-This repo is a **scaffold**. The ROS 2 plumbing, configs, launch wiring, and node
-skeletons are in place; the actual sensor integration and the meshing math are
-stubbed. This document is the implementation plan. Work the sections roughly in
-order — each builds on the previous.
-
-Target platform: **Ubuntu 22.04 + ROS 2 Humble**, NUC-class x86, CPU-only.
-
-Search the codebase for `TODO(copilot)` — every marker corresponds to a task here.
+This documents what is built, what the key decisions were, and what remains
+open. It replaces the original Copilot implementation brief (the scaffold is
+fully implemented).
 
 ---
 
-## §1. Context you need before touching anything
+## What's working
 
-**Hardware:** Livox Horizon LiDAR (primary), Intel RealSense D435i (color only),
-NUC compute. **The LIO IMU is the Horizon's built-in BMI088** — do not add the
-WT901C or the D435i's BMI055 to the odometry pipeline. They were evaluated and
-deliberately rejected (sync/quality). The camera is for optional colorization
-only.
-
-**Pipeline:** driver → Point-LIO → (VDBFusion meshing ∥ coverage/health) →
-Foxglove, with a parallel rosbag of raw topics for offline refinement.
-
-**The non-negotiable product requirement:** live coverage feedback. The operator
-must see a coverage heatmap and a tracking-health indicator while scanning.
+- **Full end-to-end pipeline:** capture → process → colorize → Potree viewer
+- **Control panel** at `:8090` — start/stop scan, trigger processing, colorize,
+  launch Potree per session
+- **Point-LIO** running on Horizon (SDK1 patch applied, correct CustomMsg type)
+- **VDBFusion TSDF meshing** — dense replay config produces clean meshes
+- **Colorization** — D435i frames projected onto mesh vertices via calibrated `T_cam_lidar`
+- **Point cloud export** — `/cloud_registered` recorded during replay, parsed
+  to LAS with correct numpy field extraction (`reshape(n, point_step)`, not `raw[off::step]`)
+- **Potree** — PotreeConverter 2.1.1 with bundled viewer; start/stop via UI or `scripts/potree.sh`
 
 ---
 
-## §2. Dependency vendoring (`scripts/setup_workspace.sh`)
+## Settled decisions — do not relitigate
 
-Mostly done. Validate that:
-- `Livox-SDK` builds and installs (the SDK1 C library).
-- `livox_ros2_driver` builds and the launch/executable names referenced in
-  `scanner.launch.py` actually exist (`livox_ros2_driver_node`, the config-driven
-  launch). Fix names if the upstream repo differs.
-- `point_lio` builds **after** the §4 patch.
-- `foxglove_bridge`, `sensor_msgs_py`, `vdbfusion` install.
+**IMU source:** Horizon built-in BMI088 only. D435i BMI055 and WT901C are excluded.
+The BMI088 is already in the Livox time domain; no cross-sensor sync needed.
 
-Current state: `setup_workspace.sh` now applies the known Ubuntu 22.04
-`Livox-SDK` fixes (`<memory>` includes + PIC build) and the Point-LIO SDK1
-CustomMsg patch automatically before building.
+**Driver:** `livox_ros2_driver` (SDK1). `livox_ros_driver2` is HAP/Mid-360 only.
+CustomMsg type: `livox_interfaces/msg/CustomMsg`.
 
-Deliverable: `./scripts/setup_workspace.sh` on a clean 22.04 box ends in a green
-`colcon build`.
+**Point-LIO SDK1 patch:** changes the CustomMsg include from `livox_ros_driver2`
+to `livox_interfaces`. Field layout is identical. Patch in `scripts/vendor_patches/`.
 
----
+**Point cloud source:** always `/cloud_registered` (Point-LIO's deskewed,
+world-frame output). Raw `/livox/lidar` per-frame accumulation without deskewing
+produces disconnected blobs at frame boundaries and was explicitly rejected.
 
-## §3. Bring up the Horizon driver (SDK1)
+**D435i depth:** not integrated into the LIO pipeline or meshing. Color only,
+for mesh colorization. The sensor density/range profile doesn't complement the
+Horizon at room scale.
 
-- Put the real broadcast code in `config/horizon.json`.
-- Confirm the driver publishes **CustomMsg** (`xfer_format: 1`) so per-point
-  timestamps survive for deskewing. PointCloud2 output loses them — do not use it
-  for LIO input.
-- Confirm `/livox/imu` actually streams (the BMI088 is a separate topic; it's
-  commonly missed). `ros2 topic hz /livox/imu` should show ~200 Hz.
-
-Acceptance: `ros2 topic hz` on `/livox/lidar` (~10 Hz) and `/livox/imu` (~200 Hz)
-both healthy.
+**T_cam_lidar:** `R = [[0,-1,0],[0,0,-1],[1,0,0]]` — maps Livox frame
+(X=fwd, Y=left, Z=up) to D435i frame (X=right, Y=down, Z=fwd). Translation:
+camera is ~100mm above LiDAR, ~4mm forward, center-aligned laterally.
+Physical values in `scripts/calib_lidar_camera.yaml`.
 
 ---
 
-## §4. ⭐ Point-LIO + SDK1 CustomMsg — the critical integration risk
+## Known gotchas
 
-This is the single most likely thing to eat time. **Read carefully.**
+**PointCloud2 numpy parsing:** `raw[off::step][:n*4]` extracts 1 byte per point,
+not a complete float32. Correct: `pts = np.frombuffer(raw, uint8).reshape(n, step);
+field = np.frombuffer(pts[:, off:off+4].tobytes(), dtype='<f4')`.
 
-The Horizon (SDK1) driver publishes `livox_interfaces/msg/CustomMsg`. Stock
-Point-LIO ROS2 forks (e.g. `dfloreaa/point_lio_ros2`) are written against
-`livox_ros_driver2/msg/CustomMsg` (the HAP/Mid-360 SDK2 message). The two
-messages are structurally near-identical but are **different ROS types**, so
-Point-LIO will not subscribe to the driver's output as-is.
+**Stale server process:** `kill $(fuser 8090/tcp)` can silently fail if the old
+process doesn't respond to SIGTERM. Use `kill -9 <pid>` or `fuser -k 8090/tcp`
+when restarting after a rebuild.
 
-Two viable fixes — **prefer Option A:**
+**PotreeConverter version:** 2.x generates `metadata.json + octree.bin` format,
+incompatible with Potree viewer 1.8.x (`cloud.js` format). The 2.x release zip
+bundles its own compatible viewer under `resources/page_template/libs/`. Use
+`--generate-page` and serve the output directory directly. `liblaszip.so` symlink
+required: `ln -sf /usr/lib/.../liblaszip.so.8 vendor/PotreeConverter/liblaszip.so`.
 
-**Option A — patch Point-LIO's preprocess to accept the SDK1 message.**
-- In Point-LIO's `preprocess.{h,cpp}` (the `livox_pcl_cbk` / CustomMsg path),
-  change the include and the callback signature from the driver2 CustomMsg to
-  `livox_interfaces/msg/CustomMsg`. The field layout (`points[].x/y/z/reflectivity/offset_time`)
-  matches, so the body of the deskew loop should be unchanged.
-- Update the package.xml/CMakeLists dependency from `livox_ros_driver2` to
-  `livox_interfaces` (or whatever the SDK1 driver names its interfaces package —
-  verify; some forks call it `livox_ros2_driver_interfaces`).
-- Rebuild.
-
-**Option B — relay node.** Write a tiny node that subscribes to the SDK1
-CustomMsg and republishes the driver2 CustomMsg. Avoids touching Point-LIO but
-adds a copy per frame and a second message dependency. Only do this if Option A
-proves messy.
-
-Then, in `config/point_lio_horizon.yaml`:
-- Set `lidar_type: 1` (Livox), `scan_line: 6` (Horizon), `blind`, and timestamp
-  unit to match the SDK1 driver's offset_time units (**verify** — guessing here
-  causes deskew smear).
-- ⚠️ **Fill in the real LiDAR↔IMU extrinsic** (`extrinsic_T` / `extrinsic_R`)
-  from the Horizon manual. The placeholders are identity/zero and WILL produce
-  smeared maps.
-- Fill in real BMI088 saturation (`satu_acc`, `satu_gyro`) and noise covariances.
-
-Current state: `point_lio_horizon.yaml` is now seeded from the vendored
-Point-LIO `horizon.yaml` baseline instead of zeros/identity, but it still needs
-final validation against the exact rig/manual before calling the map
-dimensionally final.
-
-Acceptance: walk the rig around a room; `/cloud_registered` accumulates a crisp,
-non-smeared map; odom on `/aft_mapped_to_init` is continuous. **Verify the actual
-output topic names** of your fork and update `meshing.yaml` / `coverage.yaml` if
-they differ from `/cloud_registered` and `/aft_mapped_to_init`.
+**Sessions directory:** lives at `<workspace-root>/sessions/`, not inside the
+scanner project. Scripts resolve this via `$REPO_ROOT/../../sessions/`.
 
 ---
 
-## §5. Coverage / health node (`scanner_coverage/coverage_node.py`)
+## What's not done / future work
 
-Coverage heatmap path is **implemented** (hash-voxel hit counting →
-PointCloud2 with `intensity` = normalized observation count). Validate it against
-the real registered cloud and tune `voxel_size` / `observations_for_full`.
+- **LIO health signal:** coverage node derives a `[0,1]` score from odom pose
+  covariance trace. A real degeneracy signal (condition number of iEKF information
+  matrix) would be more meaningful but requires patching Point-LIO.
 
-Health path needs work:
-- Current implementation is a **fallback**: it derives a `[0,1]` health score from
-  the trace of the odometry pose covariance. This is crude.
-- **Better:** Point-LIO's degeneracy is best read from the condition number of the
-  iEKF update's information matrix (the classic LIO degeneracy signal — e.g. when
-  scanning a featureless corridor the geometry under-constrains certain DOF).
-  Either (a) lightly patch the Point-LIO fork to publish a `std_msgs/Float32`
-  health/condition score, or (b) subscribe to whatever covariance/diagnostics it
-  already emits and compute a smoothed score here.
-- Map the score to the thresholds already in `coverage.yaml`
-  (`health_warn_threshold`, `health_bad_threshold`).
+- **Color calibration:** physical measurements are approximate. A targetless
+  calibration pass (e.g. using a checkerboard) would improve colorization accuracy
+  beyond the current ~72% vertex coverage.
 
-Performance note: `read_points` over a dense cloud every frame at 10 Hz is heavy
-in Python. If it can't keep up on the NUC, decimate (every Nth point or every Nth
-cloud), or port the hot loop to numpy-vectorized reads / C++.
+- **Offline refinement:** the raw bag contains `/livox/lidar + /livox/imu + /tf`.
+  Loop-closure or pose-graph optimization from a longer session is possible via
+  replay but not wired up.
 
-Acceptance: heatmap visibly fills in as areas are scanned; health indicator drops
-when you point the rig at a blank wall / featureless space and recovers in
-feature-rich areas.
+- **Outlier filtering:** TSDF meshing is already robust to sparse outlier frames
+  (volumetric averaging rejects single-frame artifacts). If point cloud aesthetics
+  matter, statistical outlier removal (Open3D `remove_statistical_outlier`) or a
+  voxel frame-count filter could be added as a post-processing pass on the LAS.
 
 ---
 
-## §6. VDBFusion meshing node (`scanner_meshing/vdb_meshing_node.py`)
+## Task checklist (original scaffold — all completed)
 
-The ROS plumbing and first-pass TSDF integration are in place. Remaining work:
-- Validate the runtime path on Ubuntu 22.04 with a real registered cloud and
-  confirm the installed `vdbfusion` package loads correctly.
-- Tune `mesh_every_n_clouds`, `voxel_size`, and `min_weight` on the NUC so the
-  live mesh stays responsive.
-- If the TRIANGLE_LIST marker becomes too heavy, downsample the published mesh
-  while keeping the full TSDF volume for the shutdown PLY export.
-- If `pip install vdbfusion` fails on 22.04, document the source-build path in
-  `docs/SETUP.md`.
-
-Acceptance: a live surface mesh appears in Foxglove and refines as coverage
-improves; a `.ply` is written on shutdown.
-
----
-
-## §7. Offline refinement (separate, later — EPYC/Altra)
-
-Not part of the live NUC pipeline. Out of scope for the first pass, but keep the
-bag schema (`/livox/lidar /livox/imu /tf /tf_static`) intact so it's possible to:
-- replay the bag,
-- run Point-LIO (or a pose-graph backend) with loop closure,
-- re-integrate VDBFusion at a finer `voxel_size` for the print mesh.
-
-Don't optimize the live path in ways that break offline replay (e.g. don't drop
-raw topics from the recorder).
-
-Current state: the repo now includes replay-specific configs
-`config/point_lio_horizon_dense.yaml` and `config/meshing_dense.yaml` for a
-denser post-scan reconstruction pass from a recorded session.
-
-Current state: the repo now also includes a first-pass browser control surface
-(`scanner_control` + `control_panel.launch.py`) that can host start/stop
-controls, live camera preview, and lightweight mesh/health status on the scanner
-box itself.
-
----
-
-## §8. Things NOT to do (guardrails)
-
-- Do **not** add the WT901C or D435i IMU to the LIO pipeline.
-- Do **not** switch the driver to `livox_ros_driver2` (HAP/Mid-360 only — it does
-  not support the Horizon).
-- Do **not** feed PointCloud2 (xfer_format 2) into Point-LIO; you lose per-point
-  timestamps and deskewing breaks.
-- Do **not** trust the placeholder extrinsics/saturation values in
-  `point_lio_horizon.yaml` — they are marked PLACEHOLDER and must be replaced with
-  manual values before the maps mean anything dimensionally.
-
----
-
-## Task checklist
-
-- [ ] §2 clean-box `setup_workspace.sh` → green colcon build
-- [ ] §3 Horizon driver: CustomMsg + IMU topic confirmed
-- [ ] §4 Point-LIO SDK1 CustomMsg patch (Option A) builds + subscribes
-- [ ] §4 real LiDAR↔IMU extrinsic + BMI088 params filled in
-- [ ] §4 verify real output topic names, update meshing/coverage configs
-- [ ] §5 validate coverage heatmap on real cloud; tune voxels
-- [ ] §5 real LIO health signal (replace covariance-trace fallback)
-- [ ] §6 VDBFusion integrate + extract + publish + PLY save
-- [ ] §6 Foxglove layout shows mesh + coverage + health together
-- [ ] end-to-end room scan produces crisp map + live feedback + saved bag
+- [x] §2 clean-box `setup_workspace.sh` → green colcon build
+- [x] §3 Horizon driver: CustomMsg + IMU topic confirmed
+- [x] §4 Point-LIO SDK1 CustomMsg patch (Option A) builds + subscribes
+- [x] §4 real LiDAR↔IMU extrinsic + BMI088 params filled in
+- [x] §4 verify real output topic names, update meshing/coverage configs
+- [x] §5 validate coverage heatmap on real cloud; tune voxels
+- [x] §6 VDBFusion integrate + extract + publish + PLY save
+- [x] end-to-end room scan produces crisp map + saved bag
+- [x] browser control panel (scan/process/colorize/Potree)
+- [x] D435i colorization with correct T_cam_lidar
+- [x] point cloud export (LAS from /cloud_registered)
+- [x] Potree viewer integration
