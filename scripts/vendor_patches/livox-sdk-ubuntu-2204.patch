@@ -1,0 +1,35 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 6d627a0..d4acbc7 100755
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.0)
+ project(livox_sdk)
+ 
+ set(CMAKE_CXX_STANDARD 11)
++set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+ 
+ message(STATUS "main project dir: " ${PROJECT_SOURCE_DIR})
+ 
+diff --git a/sdk_core/src/base/thread_base.cpp b/sdk_core/src/base/thread_base.cpp
+index c492a53..7060a1b 100644
+--- a/sdk_core/src/base/thread_base.cpp
++++ b/sdk_core/src/base/thread_base.cpp
+@@ -23,6 +23,7 @@
+ //
+ 
+ #include "thread_base.h"
++#include <memory>
+ #include <thread>
+ 
+ namespace livox {
+diff --git a/sdk_core/src/base/thread_base.h b/sdk_core/src/base/thread_base.h
+index 35f7fbd..2ae2ee9 100644
+--- a/sdk_core/src/base/thread_base.h
++++ b/sdk_core/src/base/thread_base.h
+@@ -25,6 +25,7 @@
+ #ifndef LIVOX_THREAD_BASE_H_
+ #define LIVOX_THREAD_BASE_H_
+ #include <atomic>
++#include <memory>
+ #include <thread>
+ #include "noncopyable.h"

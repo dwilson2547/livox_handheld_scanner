@@ -1,0 +1,17 @@
+enable_color: true
+enable_depth: true
+enable_infra: false
+enable_infra1: false
+enable_infra2: false
+enable_gyro: false
+enable_accel: false
+enable_sync: true
+enable_rgbd: false
+pointcloud.enable: false
+align_depth.enable: true
+publish_tf: true
+tf_publish_rate: 0.0
+rgb_camera.color_profile: "640,480,30"
+depth_module.depth_profile: "640,480,30"
+wait_for_device_timeout: 10.0
+reconnect_timeout: 6.0

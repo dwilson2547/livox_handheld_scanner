@@ -21,8 +21,8 @@ Horizon <-> D435i extrinsic calibration (manual procedure)
 1. Record a short bag with both sensors static, viewing a scene with clear
    straight edges at multiple depths (a doorway / box corner works well):
 
-     ros2 bag record -o calib_capture /livox/lidar /camera/color/image_raw \
-       /camera/color/camera_info
+     ros2 bag record -o calib_capture /livox/lidar /camera/d435i/color/image_raw \
+       /camera/d435i/color/camera_info
 
 2. Use livox_camera_calib (build separately, HKU MaRS repo) to solve the
    LiDAR->camera transform from the edge correspondences.

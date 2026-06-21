@@ -69,7 +69,7 @@ The live mesh is a guide; the bag is the source of truth.
 
 ## Frames
 
-- `camera_init` / world frame: Point-LIO's map origin (VERIFY exact name in fork).
+- `camera_init` / world frame: Point-LIO's default `odom_header_frame_id`.
 - `body`: IMU body frame.
 - `livox_frame`: LiDAR frame.
 - Coverage and meshing both consume `/cloud_registered` already in the world frame,

@@ -1,8 +1,8 @@
 {
-  "_comment": "livox_ros2_driver config for the Horizon (SDK1). TODO(copilot): set the real broadcast_code from the back of YOUR Horizon unit. The broadcast code is 14 serial chars + 1 extra char = 15 chars total.",
+  "_comment": "livox_ros2_driver config for the Horizon (SDK1). Set the real broadcast_code from the device label or discover it with scripts/discover_horizon_broadcast_code.sh. The broadcast code is 14 serial chars + 1 extra char = 15 chars total.",
   "lidar_config": [
     {
-      "broadcast_code": "REPLACE_WITH_HORIZON_BROADCAST_CODE",
+      "broadcast_code": "3WEDH5900100201",
       "enable_connect": true,
       "enable_fan": true,
       "return_mode": 0,

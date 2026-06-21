@@ -16,17 +16,40 @@
 #   must accept the SDK1 CustomMsg (livox_interfaces/msg/CustomMsg). See HANDOFF §4.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SRC="${WS_ROOT}/src"
 echo "Workspace root: ${WS_ROOT}"
 echo "Source dir:     ${SRC}"
+
+apply_vendor_patch() {
+  local repo_dir="$1"
+  local patch_file="$2"
+  local label="$3"
+
+  if patch --forward --dry-run -p1 -d "${repo_dir}" < "${patch_file}" >/dev/null 2>&1; then
+    echo ">> Applying ${label} patch"
+    patch --forward -p1 -d "${repo_dir}" < "${patch_file}"
+    return
+  fi
+
+  if patch --reverse --dry-run -p1 -d "${repo_dir}" < "${patch_file}" >/dev/null 2>&1; then
+    echo ">> ${label} patch already applied"
+    return
+  fi
+
+  echo "ERROR: ${label} patch no longer applies cleanly: ${patch_file}"
+  exit 1
+}
 
 if [ ! -f /opt/ros/humble/setup.bash ]; then
   echo "ERROR: ROS 2 Humble not found at /opt/ros/humble. Install it first (see docs/SETUP.md)."
   exit 1
 fi
 # shellcheck disable=SC1091
+set +u
 source /opt/ros/humble/setup.bash
+set -u
 
 cd "${SRC}"
 
@@ -34,44 +57,50 @@ cd "${SRC}"
 if [ ! -d "Livox-SDK" ]; then
   echo ">> Cloning + building Livox-SDK (SDK1)"
   git clone https://github.com/Livox-SDK/Livox-SDK.git
-  pushd Livox-SDK/build >/dev/null 2>&1 || (mkdir -p Livox-SDK/build && pushd Livox-SDK/build >/dev/null)
-  cmake .. && make -j"$(nproc)" && sudo make install
-  popd >/dev/null
 fi
+apply_vendor_patch \
+  "${SRC}/Livox-SDK" \
+  "${SCRIPT_DIR}/vendor_patches/livox-sdk-ubuntu-2204.patch" \
+  "Livox-SDK Ubuntu 22.04"
+pushd Livox-SDK/build >/dev/null 2>&1 || (mkdir -p Livox-SDK/build && pushd Livox-SDK/build >/dev/null)
+cmake .. && make -j"$(nproc)" && sudo make install
+popd >/dev/null
 
 # --- 2. livox_ros2_driver (SDK1 ROS2 driver, supports Horizon) ----------------
 if [ ! -d "livox_ros2_driver" ]; then
   echo ">> Cloning livox_ros2_driver (SDK1 -- Horizon-capable)"
   git clone https://github.com/Livox-SDK/livox_ros2_driver.git
-  # TODO(copilot): some forks rename the package dir; verify the inner package
-  # name resolves to 'livox_ros2_driver' for the launch file in scanner.launch.py.
 fi
 
 # --- 3. Point-LIO (ROS2) ------------------------------------------------------
 if [ ! -d "point_lio" ]; then
   echo ">> Cloning Point-LIO (ROS2)"
   git clone https://github.com/dfloreaa/point_lio_ros2.git point_lio
-  echo ""
-  echo "   !! ACTION REQUIRED (copilot): this fork expects livox_ros_driver2's"
-  echo "      CustomMsg. The Horizon driver publishes livox_interfaces/msg/CustomMsg"
-  echo "      (SDK1). Patch the Point-LIO preprocess to accept the SDK1 message"
-  echo "      type, OR add a small relay node that converts SDK1 CustomMsg ->"
-  echo "      the type Point-LIO expects. See HANDOFF §4 for both options."
-  echo ""
 fi
+apply_vendor_patch \
+  "${SRC}/point_lio" \
+  "${SCRIPT_DIR}/vendor_patches/point-lio-sdk1-custommsg.patch" \
+  "Point-LIO SDK1 CustomMsg"
 
 # --- 4. foxglove_bridge (apt) -------------------------------------------------
-echo ">> Installing foxglove_bridge + sensor_msgs_py (apt)"
+echo ">> Installing build/tooling deps + foxglove_bridge + sensor_msgs_py (apt)"
 sudo apt-get update
-sudo apt-get install -y ros-humble-foxglove-bridge ros-humble-sensor-msgs-py
+sudo apt-get install -y \
+  build-essential \
+  cmake \
+  python3-pip \
+  python3-colcon-common-extensions \
+  python3-rosdep \
+  ros-humble-foxglove-bridge \
+  ros-humble-sensor-msgs-py
 
 # --- 5. VDBFusion (pip) -------------------------------------------------------
 echo ">> Installing VDBFusion (pip)"
-pip install --user vdbfusion || echo "   (vdbfusion pip install failed; see HANDOFF §6 for source build)"
+python3 -m pip install --user vdbfusion || echo "   (vdbfusion pip install failed; see HANDOFF §6 for source build)"
 
 # --- 6. rosdep + build --------------------------------------------------------
 cd "${WS_ROOT}"
-rosdep install --from-paths src --ignore-src -y || true
+rosdep install --from-paths src --ignore-src -y
 echo ">> colcon build"
 colcon build --symlink-install
 

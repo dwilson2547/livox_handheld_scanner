@@ -1,25 +1,13 @@
-# Coverage / health node config.
-coverage:
-  cloud_topic: "/cloud_registered"
-  odom_topic: "/aft_mapped_to_init"
-  map_frame: "camera_init"           # VERIFY against Point-LIO fork
-
-  # Voxel grid for observation-density tracking (coarser than the mesh grid).
-  voxel_size: 0.10                   # 10 cm coverage cells
-  observations_for_full: 8           # hits before a cell is "well covered"
-
-  # Coverage heatmap output (Foxglove/RViz)
-  heatmap_topic: "/scanner/coverage"          # PointCloud2 with intensity = obs count
-  publish_rate_hz: 5.0
-
-  # --- LIO health / degeneracy ---
-  # Health is derived from: registration residual, iEKF convergence, and the
-  # condition number of the pose-update information matrix (degeneracy proxy).
-  # TODO(copilot): Point-LIO does not expose a clean health topic out of the
-  # box. Either (a) subscribe to whatever diagnostic/odom-covariance it does
-  # publish, or (b) lightly patch the fork to publish a Float32 health score.
-  # See HANDOFF §5. Until then this node falls back to odom-covariance trace.
-  health_topic: "/scanner/health"             # std_msgs/Float32 in [0,1]
-  health_warn_threshold: 0.4
-  health_bad_threshold: 0.2
-  odom_cov_trace_warn: 0.05          # fallback heuristic when no native health signal
+/**:
+  ros__parameters:
+    cloud_topic: "/cloud_registered"
+    odom_topic: "/aft_mapped_to_init"
+    map_frame: "camera_init"           # Default Point-LIO odom_header_frame_id
+    voxel_size: 0.10                   # 10 cm coverage cells
+    observations_for_full: 8           # hits before a cell is "well covered"
+    heatmap_topic: "/scanner/coverage" # PointCloud2 with intensity = obs count
+    publish_rate_hz: 5.0
+    # Point-LIO does not expose a native health score yet, so this stays on the
+    # odom-covariance fallback until the fork grows a real diagnostic output.
+    health_topic: "/scanner/health"
+    odom_cov_trace_warn: 0.05

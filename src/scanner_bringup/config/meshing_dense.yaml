@@ -1,0 +1,14 @@
+/**:
+  ros__parameters:
+    cloud_topic: "/cloud_registered"
+    odom_topic: "/aft_mapped_to_init"
+    map_frame: "camera_init"
+    voxel_size: 0.05                   # coarser voxels fill sparse handheld scans better
+    sdf_trunc: 0.20
+    space_carving: true
+    mesh_every_n_clouds: 10
+    min_weight: 1.0
+    mesh_topic: "/scanner/mesh"
+    publish_mesh: true
+    save_on_shutdown: true
+    save_path: "sessions/mesh_dense_replay.ply"

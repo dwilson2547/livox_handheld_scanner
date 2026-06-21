@@ -37,6 +37,10 @@ Mostly done. Validate that:
 - `point_lio` builds **after** the §4 patch.
 - `foxglove_bridge`, `sensor_msgs_py`, `vdbfusion` install.
 
+Current state: `setup_workspace.sh` now applies the known Ubuntu 22.04
+`Livox-SDK` fixes (`<memory>` includes + PIC build) and the Point-LIO SDK1
+CustomMsg patch automatically before building.
+
 Deliverable: `./scripts/setup_workspace.sh` on a clean 22.04 box ends in a green
 `colcon build`.
 
@@ -92,6 +96,11 @@ Then, in `config/point_lio_horizon.yaml`:
   smeared maps.
 - Fill in real BMI088 saturation (`satu_acc`, `satu_gyro`) and noise covariances.
 
+Current state: `point_lio_horizon.yaml` is now seeded from the vendored
+Point-LIO `horizon.yaml` baseline instead of zeros/identity, but it still needs
+final validation against the exact rig/manual before calling the map
+dimensionally final.
+
 Acceptance: walk the rig around a room; `/cloud_registered` accumulates a crisp,
 non-smeared map; odom on `/aft_mapped_to_init` is continuous. **Verify the actual
 output topic names** of your fork and update `meshing.yaml` / `coverage.yaml` if
@@ -129,20 +138,15 @@ feature-rich areas.
 
 ## §6. VDBFusion meshing node (`scanner_meshing/vdb_meshing_node.py`)
 
-Currently a **no-op stub** with full ROS plumbing. Implement:
-- Instantiate `VDBVolume(voxel_size, sdf_trunc, space_carving)`.
-- On each registered cloud: convert to an `(N,3)` float64 numpy array, get the
-  sensor origin from the latest odom (already cached as `self._last_origin`), and
-  call `self.vdb.integrate(points, origin)`. Origin matters — space carving needs
-  the true sensor position per integration.
-- Every `mesh_every_n_clouds`, call `extract_triangle_mesh(min_weight=...)` and
-  publish a `visualization_msgs/Marker` TRIANGLE_LIST on `/scanner/mesh`.
-  (For large meshes, consider downsampling the published marker and keeping the
-  full-res volume only for the on-shutdown PLY save.)
-- On shutdown, write the PLY to `save_path`.
-
-If `pip install vdbfusion` fails on 22.04, build from source (OpenVDB + pybind);
-note the steps in `docs/SETUP.md` once solved.
+The ROS plumbing and first-pass TSDF integration are in place. Remaining work:
+- Validate the runtime path on Ubuntu 22.04 with a real registered cloud and
+  confirm the installed `vdbfusion` package loads correctly.
+- Tune `mesh_every_n_clouds`, `voxel_size`, and `min_weight` on the NUC so the
+  live mesh stays responsive.
+- If the TRIANGLE_LIST marker becomes too heavy, downsample the published mesh
+  while keeping the full TSDF volume for the shutdown PLY export.
+- If `pip install vdbfusion` fails on 22.04, document the source-build path in
+  `docs/SETUP.md`.
 
 Acceptance: a live surface mesh appears in Foxglove and refines as coverage
 improves; a `.ply` is written on shutdown.
@@ -159,6 +163,15 @@ bag schema (`/livox/lidar /livox/imu /tf /tf_static`) intact so it's possible to
 
 Don't optimize the live path in ways that break offline replay (e.g. don't drop
 raw topics from the recorder).
+
+Current state: the repo now includes replay-specific configs
+`config/point_lio_horizon_dense.yaml` and `config/meshing_dense.yaml` for a
+denser post-scan reconstruction pass from a recorded session.
+
+Current state: the repo now also includes a first-pass browser control surface
+(`scanner_control` + `control_panel.launch.py`) that can host start/stop
+controls, live camera preview, and lightweight mesh/health status on the scanner
+box itself.
 
 ---
 
