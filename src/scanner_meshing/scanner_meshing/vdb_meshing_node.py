@@ -57,6 +57,7 @@ class VdbMeshingNode(Node):
         self.declare_parameter("mesh_topic", "/scanner/mesh")
         self.declare_parameter("publish_mesh", True)
         self.declare_parameter("save_on_shutdown", True)
+        self.declare_parameter("save_every_publish", False)
         self.declare_parameter("save_path", "sessions/mesh_live.ply")
 
         self.map_frame = self.get_parameter("map_frame").value
@@ -66,9 +67,10 @@ class VdbMeshingNode(Node):
         self.mesh_every_n = int(self.get_parameter("mesh_every_n_clouds").value)
         self.min_weight = float(self.get_parameter("min_weight").value)
         self.publish_mesh = bool(self.get_parameter("publish_mesh").value)
+        self.save_every_publish = bool(self.get_parameter("save_every_publish").value)
         self.save_path = Path(self.get_parameter("save_path").value).expanduser()
 
-        self._last_origin = (0.0, 0.0, 0.0)  # sensor origin for TSDF carving
+        self._last_pose = np.eye(4, dtype=np.float64)  # SE3 world←sensor for TSDF integration
         self._cloud_count = 0
 
         self.vdb = None
@@ -98,7 +100,8 @@ class VdbMeshingNode(Node):
         )
 
         self.get_logger().info(
-            f"vdb_meshing up: voxel={self.voxel_size}m trunc={self.sdf_trunc}m"
+            f"vdb_meshing up: voxel={self.voxel_size}m trunc={self.sdf_trunc}m "
+            f"save_path={self._resolved_save_path()}"
         )
         if not _HAS_VDB:
             self.get_logger().warn(
@@ -108,7 +111,20 @@ class VdbMeshingNode(Node):
 
     def _on_odom(self, msg: Odometry):
         p = msg.pose.pose.position
-        self._last_origin = (p.x, p.y, p.z)
+        q = msg.pose.pose.orientation
+        qx, qy, qz, qw = q.x, q.y, q.z, q.w
+        n = np.sqrt(qx*qx + qy*qy + qz*qz + qw*qw)
+        if n > 1e-9:
+            qx, qy, qz, qw = qx/n, qy/n, qz/n, qw/n
+        R = np.array([
+            [1 - 2*(qy*qy + qz*qz), 2*(qx*qy - qz*qw), 2*(qx*qz + qy*qw)],
+            [2*(qx*qy + qz*qw), 1 - 2*(qx*qx + qz*qz), 2*(qy*qz - qx*qw)],
+            [2*(qx*qz - qy*qw), 2*(qy*qz + qx*qw), 1 - 2*(qx*qx + qy*qy)],
+        ], dtype=np.float64)
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = R
+        T[:3, 3] = [p.x, p.y, p.z]
+        self._last_pose = T
 
     def _on_cloud(self, msg: PointCloud2):
         if not _HAS_PC2_PY or not _HAS_VDB or self.vdb is None:
@@ -128,8 +144,7 @@ class VdbMeshingNode(Node):
         if points.size == 0:
             return
 
-        origin = np.asarray(self._last_origin, dtype=np.float64)
-        self.vdb.integrate(points=points, extrinsic=origin)
+        self.vdb.integrate(points=points, extrinsic=self._last_pose)
 
         self._cloud_count += 1
         if (
@@ -166,6 +181,8 @@ class VdbMeshingNode(Node):
                 vx, vy, vz = verts[int(vertex_idx)]
                 marker.points.append(Point(x=float(vx), y=float(vy), z=float(vz)))
         self.mesh_pub.publish(marker)
+        if self.get_parameter("save_on_shutdown").value or self.save_every_publish:
+            self._write_binary_ply(self._resolved_save_path(), verts, tris)
 
     def _publish_empty_mesh(self):
         marker = Marker()
@@ -177,26 +194,40 @@ class VdbMeshingNode(Node):
         self.mesh_pub.publish(marker)
 
     @staticmethod
-    def _write_ascii_ply(path: Path, vertices: np.ndarray, triangles: np.ndarray):
+    def _write_binary_ply(path: Path, vertices: np.ndarray, triangles: np.ndarray):
+        """Write binary little-endian PLY — ~3x smaller than ASCII and parses in ms in Three.js."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as handle:
-            handle.write("ply\n")
-            handle.write("format ascii 1.0\n")
-            handle.write(f"element vertex {len(vertices)}\n")
-            handle.write("property float x\n")
-            handle.write("property float y\n")
-            handle.write("property float z\n")
-            handle.write(f"element face {len(triangles)}\n")
-            handle.write("property list uchar int vertex_indices\n")
-            handle.write("end_header\n")
-            for vertex in vertices:
-                handle.write(
-                    f"{float(vertex[0])} {float(vertex[1])} {float(vertex[2])}\n"
-                )
-            for triangle in triangles:
-                handle.write(
-                    f"3 {int(triangle[0])} {int(triangle[1])} {int(triangle[2])}\n"
-                )
+        n_verts = len(vertices)
+        n_tris = len(triangles)
+        header = (
+            "ply\n"
+            "format binary_little_endian 1.0\n"
+            f"element vertex {n_verts}\n"
+            "property float x\n"
+            "property float y\n"
+            "property float z\n"
+            f"element face {n_tris}\n"
+            "property list uchar int vertex_indices\n"
+            "end_header\n"
+        ).encode("ascii")
+        # Vertices: float32 xyz, tightly packed
+        verts_f32 = np.asarray(vertices, dtype="<f4")[:, :3]
+        # Faces: uchar count (=3) followed by three int32 indices
+        # Numpy structured array handles the mixed-width layout cleanly
+        face_dt = np.dtype([("count", np.uint8), ("i0", "<i4"), ("i1", "<i4"), ("i2", "<i4")])
+        face_arr = np.empty(n_tris, dtype=face_dt)
+        face_arr["count"] = 3
+        tris_i32 = np.asarray(triangles, dtype="<i4")
+        face_arr["i0"] = tris_i32[:, 0]
+        face_arr["i1"] = tris_i32[:, 1]
+        face_arr["i2"] = tris_i32[:, 2]
+        with path.open("wb") as handle:
+            handle.write(header)
+            handle.write(verts_f32.tobytes())
+            handle.write(face_arr.tobytes())
+
+    def _resolved_save_path(self) -> Path:
+        return self.save_path if self.save_path.is_absolute() else Path.cwd() / self.save_path
 
     def destroy_node(self):
         if (
@@ -206,10 +237,8 @@ class VdbMeshingNode(Node):
         ):
             verts, tris = self.vdb.extract_triangle_mesh(min_weight=self.min_weight)
             if len(verts) > 0 and len(tris) > 0:
-                output_path = self.save_path
-                if not output_path.is_absolute():
-                    output_path = Path.cwd() / output_path
-                self._write_ascii_ply(output_path, verts, tris)
+                output_path = self._resolved_save_path()
+                self._write_binary_ply(output_path, verts, tris)
                 self.get_logger().info(f"wrote live mesh to {output_path}")
         super().destroy_node()
 

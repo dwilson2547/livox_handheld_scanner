@@ -4,10 +4,10 @@
     prop_at_freq_of_imu: true
     check_satu: true
     init_map_size: 10
-    point_filter_num: 3       # decimation; lower = denser/slower
+    point_filter_num: 2       # keep most points; raise to 3+ if NUC can't keep up
     space_down_sample: true
-    filter_size_surf: 0.3
-    filter_size_map: 0.3
+    filter_size_surf: 0.10    # was 0.3; 10cm surface downsampling for LIO matching
+    filter_size_map: 0.10     # was 0.3; 10cm map voxel grid
     cube_side_length: 1000.0
     runtime_pos_log_enable: false
 
@@ -28,8 +28,9 @@
 
     mapping:
       imu_en: true
-      # Seeded from the vendored Point-LIO Horizon config; verify against the
-      # exact hardware/manual before treating the output as dimensionally final.
+      # extrinsic_T/R: LiDAR-to-IMU transform (both internal to the Horizon).
+      # The official Point-LIO Horizon example uses identity rotation; the previous
+      # 90-deg X rotation here was incorrect and caused LIO divergence.
       extrinsic_est_en: false
       extrinsic_T: [0.05512, 0.02226, -0.0297]
       extrinsic_R: [1.0, 0.0, 0.0,

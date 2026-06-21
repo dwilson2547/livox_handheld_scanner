@@ -124,26 +124,8 @@ Current features:
 - LiDAR / IMU / health status
 - lightweight live mesh preview from `/scanner/mesh`
 
-Current limitations:
-- the camera preview only updates while the scan stack is running
-- the LiDAR preview is a lightweight operator view and is expected to be sparser
-  than the post-scan replay result
-
-## 8. Offline replay / dev without hardware
+## 6. Offline replay / dev without hardware
 
 ```bash
 ros2 launch scanner_bringup scanner.launch.py use_bag:=true bag_path:=sessions/<session>
 ```
-
-For a denser post-scan reconstruction pass, use the replay-specific configs:
-
-```bash
-ros2 launch scanner_bringup scanner.launch.py \
-  use_bag:=true \
-  bag_path:=sessions/<session> \
-  record:=false foxglove:=false rviz:=false \
-  point_lio_config:=/home/daniel/ros2_ws/install/scanner_bringup/share/scanner_bringup/config/point_lio_horizon_dense.yaml \
-  meshing_config:=/home/daniel/ros2_ws/install/scanner_bringup/share/scanner_bringup/config/meshing_dense.yaml
-```
-
-This is the recommended path for the fuller mesh artifact after an on-device scan.

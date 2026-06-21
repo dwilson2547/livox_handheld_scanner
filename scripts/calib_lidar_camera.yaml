@@ -1,0 +1,35 @@
+# Livox Horizon → RealSense D435i color camera extrinsic calibration
+#
+# T_cam_lidar: 4×4 SE3 that transforms a point from the Horizon LiDAR frame
+# into the D435i color camera frame.
+#
+# Horizon LiDAR frame (= Point-LIO aft_mapped with identity extrinsic_R):
+#   X: forward (scanning direction)
+#   Y: left
+#   Z: up
+#
+# D435i color camera frame (standard camera convention):
+#   X: right (in image)
+#   Y: down (in image)
+#   Z: forward (into scene)
+#
+# Rotation:
+#   cam_X = -lidar_Y  (right in image  = negative left)
+#   cam_Y = -lidar_Z  (down in image   = negative up)
+#   cam_Z =  lidar_X  (forward in both)
+#
+# Physical measurements (approximate, optical centres):
+#   Camera is 100 mm above the LiDAR  (+Z in Horizon frame)
+#   Camera face is 4 mm forward of the LiDAR face  (+X in Horizon frame)
+#   Left/right centres are aligned  (Y = 0)
+#   => camera position in LiDAR frame = (+0.004, 0, +0.100) m
+#   => T_cam_lidar translation = -R_cam_lidar @ p_cam_in_lidar = [0, +0.100, -0.004]
+#
+# Refine with livox_camera_calib or direct_visual_lidar_calibration for
+# sub-centimetre accuracy.
+#
+T_cam_lidar:
+  - [ 0.0, -1.0,  0.0,  0.000]
+  - [ 0.0,  0.0, -1.0,  0.100]
+  - [ 1.0,  0.0,  0.0, -0.004]
+  - [ 0.0,  0.0,  0.0,  1.000]

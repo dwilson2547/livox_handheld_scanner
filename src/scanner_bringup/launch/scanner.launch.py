@@ -61,7 +61,14 @@ def _launch_setup(context, *args, **kwargs):
     record_enabled = (
         context.launch_configurations["record"] == "true" and not use_bag_enabled
     )
-    session_output = f"sessions/session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    camera_enabled = context.launch_configurations.get("enable_camera", "false") == "true"
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    raw_session_name = context.launch_configurations.get("session_name", "").strip()
+    if raw_session_name:
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in raw_session_name)
+        session_output = f"sessions/{safe_name}_{timestamp}"
+    else:
+        session_output = f"sessions/session_{timestamp}"
 
     actions = []
 
@@ -160,14 +167,15 @@ def _launch_setup(context, *args, **kwargs):
 
     # --- 5. Parallel raw recorder (live sessions only) ----------------------
     # Records exactly the topics needed to re-run LIO + refinement offline.
+    recorder_topics = ["/livox/lidar", "/livox/imu", "/tf", "/tf_static", "/aft_mapped_to_init"]
+    if camera_enabled:
+        recorder_topics += [
+            "/camera/d435i/color/image_raw",
+            "/camera/d435i/aligned_depth_to_color/image_raw",
+            "/camera/d435i/color/camera_info",
+        ]
     recorder = ExecuteProcess(
-        cmd=[
-            "ros2", "bag", "record",
-            "-o", session_output,
-            "/livox/lidar",
-            "/livox/imu",
-            "/tf", "/tf_static",
-        ],
+        cmd=["ros2", "bag", "record", "-o", session_output, *recorder_topics],
         output="screen",
         condition=IfCondition("true" if record_enabled else "false"),
     )
@@ -247,6 +255,11 @@ def generate_launch_description():
                     [FindPackageShare("scanner_bringup"), "config", "meshing.yaml"]
                 ),
                 description="Meshing parameter file to use.",
+            ),
+            DeclareLaunchArgument(
+                "session_name",
+                default_value="",
+                description="Optional custom prefix for the session directory (alphanumeric, hyphens, underscores).",
             ),
             OpaqueFunction(function=_launch_setup),
         ]

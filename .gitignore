@@ -8,6 +8,10 @@ src/Livox-SDK/
 src/livox_ros2_driver/
 src/point_lio/
 
+# downloaded binaries (set up by scripts/setup_potree.sh / setup_workspace.sh)
+vendor/
+viewer/
+
 # capture data
 sessions/
 *.bag

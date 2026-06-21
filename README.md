@@ -57,14 +57,6 @@ ros2 launch scanner_bringup scanner.launch.py enable_camera:=true
 
 # config-portal / dry run without hardware (plays a bag instead of the live driver)
 ros2 launch scanner_bringup scanner.launch.py use_bag:=true bag_path:=/path/to/session
-
-# denser offline replay / reconstruction pass for a saved session
-ros2 launch scanner_bringup scanner.launch.py \
-  use_bag:=true \
-  bag_path:=/path/to/session \
-  record:=false foxglove:=false rviz:=false \
-  point_lio_config:=/home/daniel/ros2_ws/install/scanner_bringup/share/scanner_bringup/config/point_lio_horizon_dense.yaml \
-  meshing_config:=/home/daniel/ros2_ws/install/scanner_bringup/share/scanner_bringup/config/meshing_dense.yaml
 ```
 
 ## Repo layout
@@ -121,10 +113,3 @@ This first pass provides:
 
 The control panel starts and stops the existing `scanner.launch.py` stack as a
 child process, keeping the “operator UI” separate from the “scanner pipeline.”
-
-Current limitations:
-- the camera preview is only live while the scan stack is running
-- the LiDAR preview is intentionally lightweight and should be treated as an
-  operator preview, not a final-quality reconstruction
-- the recommended final artifact path is still **post-scan replay** using the
-  dense replay configs
