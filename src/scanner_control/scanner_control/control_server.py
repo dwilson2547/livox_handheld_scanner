@@ -163,6 +163,8 @@ class SharedState:
     processing_status: str = "idle"
     processing_message: Optional[str] = None
     latest_preview_bytes: Optional[bytes] = None
+    lidar_points_samples: deque = field(default_factory=lambda: deque(maxlen=16))
+    cloud_registered_rate: TopicRateTracker = field(default_factory=TopicRateTracker)
     colorize_thread: Optional[threading.Thread] = None
     colorize_status: str = "idle"
     colorize_capture_dir: Optional[str] = None
@@ -472,6 +474,7 @@ class SharedState:
             self.processing_capture_dir = str(capture_path)
             self.processing_mesh_path = str(output_mesh)
             self.processing_log_path = str(log_path)
+            self.cloud_registered_rate = TopicRateTracker()
             self.processing_status = "running"
             self.processing_message = "dense replay started"
 
@@ -509,9 +512,17 @@ class SharedState:
                 time.sleep(1.0)
 
             if bag_pid is not None:
+                cloud_ever_active = False
                 while proc.poll() is None:
                     if subprocess.run(["ps", "-p", str(bag_pid)], capture_output=True).returncode != 0:
                         break
+                    cloud_age = self.cloud_registered_rate.age_s()
+                    if cloud_age is not None:
+                        cloud_ever_active = True
+                    if cloud_ever_active and cloud_age is not None and cloud_age > 5.0:
+                        with self.lock:
+                            if self.processing_status == "running":
+                                self.processing_message = "LIO diverged — cloud_registered stalled; keep sensor aimed at scene geometry"
                     time.sleep(2.0)
                 if proc.poll() is None:
                     time.sleep(5.0)
@@ -576,6 +587,8 @@ class SharedState:
                 "lidar": {
                     "rate_hz": self.lidar_rate.rate_hz(),
                     "age_s": self.lidar_rate.age_s(),
+                    "points_per_frame": int(sum(self.lidar_points_samples) / len(self.lidar_points_samples)) if self.lidar_points_samples else 0,
+                    "sparse_warning": bool(self.lidar_points_samples and self.lidar_rate.rate_hz() > 0 and (sum(self.lidar_points_samples) / len(self.lidar_points_samples)) < 5000),
                 },
                 "imu": {
                     "rate_hz": self.imu_rate.rate_hz(),
@@ -764,6 +777,7 @@ class ScannerControlNode(Node):
         self.create_subscription(PointCloud2, "/cloud_registered", self._on_cloud, sensor_qos)
 
     def _on_cloud(self, msg: PointCloud2) -> None:
+        self._state.cloud_registered_rate.tick()
         if not _HAS_PC2_PY:
             return
         point_rows = list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True))
@@ -785,6 +799,7 @@ class ScannerControlNode(Node):
 
     def _on_lidar(self, msg: CustomMsg) -> None:
         self._state.lidar_rate.tick()
+        self._state.lidar_points_samples.append(msg.point_num)
 
     def _on_imu(self, _msg) -> None:
         self._state.imu_rate.tick()
@@ -882,6 +897,15 @@ def image_msg_to_bmp(msg: Image) -> Optional[bytes]:
 
 def make_handler(state: SharedState):
     class Handler(BaseHTTPRequestHandler):
+        def _client_host(self) -> str:
+            return self.headers.get("Host", "localhost").split(":")[0]
+
+        def _fix_potree_url(self, payload: dict) -> dict:
+            potree = payload.get("potree")
+            if isinstance(potree, dict) and isinstance(potree.get("url"), str):
+                potree["url"] = potree["url"].replace("localhost", self._client_host())
+            return payload
+
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
@@ -889,13 +913,13 @@ def make_handler(state: SharedState):
                 self._serve_file(WEB_ROOT / "index.html", "text/html; charset=utf-8")
                 return
             if parsed.path == "/api/status":
-                self._serve_json(state.status_payload())
+                self._serve_json(self._fix_potree_url(state.status_payload()))
                 return
             if parsed.path == "/api/mesh":
                 self._serve_json(state.mesh_payload())
                 return
             if parsed.path == "/api/captures":
-                self._serve_json(state.captures_payload())
+                self._serve_json(self._fix_potree_url(state.captures_payload()))
                 return
             if parsed.path == "/api/camera.bmp":
                 payload = state.camera_payload()
@@ -1011,7 +1035,8 @@ def make_handler(state: SharedState):
                     self.send_error(HTTPStatus.BAD_REQUEST, "capture_dir is required")
                     return
                 ok, message = state.start_potree(capture_dir)
-                self._serve_json({"ok": ok, "message": message, "url": message if ok else None},
+                url = message.replace("localhost", self._client_host()) if ok else None
+                self._serve_json({"ok": ok, "message": message, "url": url},
                                  status=HTTPStatus.OK if ok else HTTPStatus.CONFLICT)
                 return
             if parsed.path == "/api/potree/stop":

@@ -1,0 +1,21 @@
+[Unit]
+Description=Scanner control panel (livox_handheld_scanner HTTP server)
+After=network.target
+# Does not require network-online — the control panel is a lightweight HTTP
+# server; the Livox driver only starts when the user presses Start Scan.
+
+[Service]
+Type=simple
+User=daniel
+Group=daniel
+Environment=HOME=/home/daniel
+Environment=USER=daniel
+ExecStart=/home/daniel/documents/workspace/robotics/livox_handheld_scanner/scripts/start_control_panel.sh
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scanner-control
+
+[Install]
+WantedBy=multi-user.target

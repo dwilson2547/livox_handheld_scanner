@@ -200,10 +200,14 @@
 
           <div>
             <h2>System status</h2>
+            <div id="sparseWarning" style="display:none;background:#7a3000;color:#ffcc88;padding:6px 10px;border-radius:4px;margin-bottom:8px;font-size:0.9em;">
+              ⚠ LiDAR point density low — sensor may be aimed at open sky
+            </div>
             <div class="status-grid">
               <div class="metric"><label>Scanner</label><div class="value" id="scannerState">idle</div></div>
               <div class="metric"><label>Health</label><div class="value" id="health">n/a</div></div>
               <div class="metric"><label>LiDAR rate</label><div class="value" id="lidarRate">0 Hz</div></div>
+              <div class="metric"><label>LiDAR pts/frame</label><div class="value" id="lidarPts">—</div></div>
               <div class="metric"><label>IMU rate</label><div class="value" id="imuRate">0 Hz</div></div>
               <div class="metric"><label>Camera rate</label><div class="value" id="cameraRate">0 Hz</div></div>
               <div class="metric"><label>Mesh triangles</label><div class="value" id="meshTriangles">0</div></div>
@@ -389,6 +393,8 @@
         document.getElementById("scannerState").textContent = status.scanner_running ? "running" : "idle";
         document.getElementById("health").textContent = status.health === null ? "n/a" : status.health.toFixed(2);
         document.getElementById("lidarRate").textContent = `${status.lidar.rate_hz.toFixed(1)} Hz`;
+        document.getElementById("lidarPts").textContent = status.lidar.rate_hz > 0 ? status.lidar.points_per_frame.toLocaleString() : "—";
+        document.getElementById("sparseWarning").style.display = status.lidar.sparse_warning ? "block" : "none";
         document.getElementById("imuRate").textContent = `${status.imu.rate_hz.toFixed(1)} Hz`;
         document.getElementById("cameraRate").textContent = `${status.camera.rate_hz.toFixed(1)} Hz`;
         document.getElementById("meshTriangles").textContent = status.mesh.triangle_count;
@@ -398,9 +404,11 @@
           ? status.odom.position.map((v) => v.toFixed(2)).join(", ")
           : "n/a";
 
-        processingStateEl.textContent = status.processing.message
-          ? `${status.processing.status}: ${status.processing.message}`
+        const procMsg = status.processing.message || "";
+        processingStateEl.textContent = procMsg
+          ? `${status.processing.status}: ${procMsg}`
           : `processing: ${status.processing.status}`;
+        processingStateEl.style.color = procMsg.includes("diverged") ? "#ffaa44" : "";
 
         startBtn.disabled = status.scanner_running;
         stopBtn.disabled = !status.scanner_running;

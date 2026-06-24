@@ -65,7 +65,37 @@ from the point cloud and easy to miss. If it's silent, check `imu_rate` in `hori
 If using the D435i, run `lsusb -t` and confirm it enumerates at **5000M** (USB 3).
 USB 2 fallback degrades color/depth throughput significantly.
 
-## 6. Control panel (primary workflow)
+## 6. Autostart on boot (systemd service)
+
+The control panel can run as a system service so it starts automatically when the
+NUC boots — no login required, just plug in and open the browser.
+
+```bash
+# Install (one-time, run from the workspace root)
+sudo cp src/livox_handheld_scanner/scripts/scanner-control.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now scanner-control
+```
+
+The service file is version-controlled at `scripts/scanner-control.service`.
+After a re-image or workspace change, just re-run the three lines above.
+
+**Useful commands:**
+
+```bash
+systemctl status scanner-control          # is it running?
+journalctl -u scanner-control -f          # live log
+sudo systemctl restart scanner-control    # restart after a rebuild
+sudo systemctl disable scanner-control    # revert to manual start
+```
+
+**When the service is installed** the control panel is available at
+`http://<scanner-ip>:8090` within ~5 seconds of boot.
+
+## 7. Control panel (manual start / development)
+
+If the systemd service is not installed, or you want to run a second instance
+for testing, start the control panel manually:
 
 ```bash
 source ~/ros2_ws/install/setup.bash
@@ -83,7 +113,7 @@ Open `http://<scanner-ip>:8090`. From here:
 5. **Launch Potree** — converts `pointcloud.las` to octree and serves at `:8087`;
    button changes to **Open Potree ↗** and **Stop Potree** when running
 
-## 7. Potree CLI (alternative to UI)
+## 8. Potree CLI (alternative to UI)
 
 ```bash
 bash scripts/potree.sh                        # show status + list sessions
@@ -92,7 +122,7 @@ bash scripts/potree.sh start living-room      # fuzzy-match session name
 bash scripts/potree.sh stop                   # stop running viewer
 ```
 
-## 8. Offline replay without hardware
+## 9. Offline replay without hardware
 
 ```bash
 source ~/ros2_ws/install/setup.bash
@@ -101,7 +131,7 @@ ros2 launch scanner_bringup scanner.launch.py use_bag:=true bag_path:=sessions/<
 
 This is what the control panel "Process" button does internally, with the dense configs.
 
-## 9. Calibration
+## 10. Calibration
 
 Physical `T_cam_lidar` values are in `scripts/calib_lidar_camera.yaml`. The
 rotation `R = [[0,-1,0],[0,0,-1],[1,0,0]]` maps Livox frame to D435i frame —

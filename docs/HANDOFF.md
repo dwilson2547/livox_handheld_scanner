@@ -11,6 +11,10 @@ fully implemented).
 - **Full end-to-end pipeline:** capture → process → colorize → Potree viewer
 - **Control panel** at `:8090` — start/stop scan, trigger processing, colorize,
   launch Potree per session
+- **Autostart on boot** — `scanner-control.service` systemd unit runs the control
+  panel as user `daniel` on every boot; available ~5 s after power-on, no login needed.
+  Service file at `scripts/scanner-control.service`; wrapper script at
+  `scripts/start_control_panel.sh`. Logs via `journalctl -u scanner-control`.
 - **Point-LIO** running on Horizon (SDK1 patch applied, correct CustomMsg type)
 - **VDBFusion TSDF meshing** — dense replay config produces clean meshes
 - **Colorization** — D435i frames projected onto mesh vertices via calibrated `T_cam_lidar`
@@ -51,6 +55,15 @@ Physical values in `scripts/calib_lidar_camera.yaml`.
 **PointCloud2 numpy parsing:** `raw[off::step][:n*4]` extracts 1 byte per point,
 not a complete float32. Correct: `pts = np.frombuffer(raw, uint8).reshape(n, step);
 field = np.frombuffer(pts[:, off:off+4].tobytes(), dtype='<f4')`.
+
+**Sky-pointing causes silent LIO divergence:** Point-LIO silently loses track when
+the LiDAR is aimed at open sky (near-zero returns → no plane residuals → iEKF
+diverges). The estimator freezes on the last valid frame; no error is thrown;
+processing completes but produces no mesh. The control panel now shows a live
+pts/frame metric and amber warning banner when density drops below 5,000 pts/frame.
+During processing replay, a stalled `/cloud_registered` (>5 s without a message
+after having been active) turns the processing status line orange with a divergence
+message. See `docs/issues/2026_06_24_point_lio_sky_divergence.md`.
 
 **Stale server process:** `kill $(fuser 8090/tcp)` can silently fail if the old
 process doesn't respond to SIGTERM. Use `kill -9 <pid>` or `fuser -k 8090/tcp`

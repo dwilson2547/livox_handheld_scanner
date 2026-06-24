@@ -42,10 +42,17 @@ cd ~/ros2_ws/src/livox_handheld_scanner
 bash scripts/setup_workspace.sh
 bash scripts/setup_potree.sh
 
-# Start the control panel (primary interface)
+# Install autostart service (one-time — control panel then starts on every boot)
+sudo cp scripts/scanner-control.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now scanner-control
+# → open http://<scanner-ip>:8090  (available ~5 s after boot, no login needed)
+```
+
+For development or if the service is not installed, start the control panel manually:
+
+```bash
 source ~/ros2_ws/install/setup.bash
 ros2 launch scanner_bringup control_panel.launch.py
-# → open http://<scanner-ip>:8090
 ```
 
 From the control panel you can:
@@ -53,6 +60,11 @@ From the control panel you can:
 - **Process** — replays through Point-LIO + VDBFusion, produces mesh + point cloud LAS
 - **Colorize** — projects D435i frames onto mesh vertices
 - **Launch Potree** — converts point cloud to octree and serves it at `:8087`
+
+The status panel shows **LiDAR pts/frame** in real time. An amber warning banner appears if
+point density drops below ~5,000 pts/frame, indicating the sensor is likely aimed at open sky
+or otherwise degenerate geometry. During processing replay, the processing status line turns
+orange and shows a message if Point-LIO diverges mid-replay (`/cloud_registered` stalls).
 
 ## Repo layout
 
@@ -85,3 +97,4 @@ Each scan is saved to `<workspace>/sessions/<session-name>/`:
 - **Broadcast code** — put the Horizon's 15-char code in `src/scanner_bringup/config/horizon.json`; use `scripts/discover_horizon_broadcast_code.sh` to find it
 - **T_cam_lidar** — physical calibration in `scripts/calib_lidar_camera.yaml`; adjust offsets if you remount the camera
 - **Point cloud source** — always `/cloud_registered` (Point-LIO deskewed output), never raw `/livox/lidar` per-frame accumulation
+- **Sky-pointing kills the scan** — Point-LIO requires geometric features (surfaces) to maintain its iEKF solution. Pointing at open sky returns near-zero LiDAR points; the estimator diverges silently and no mesh is produced. Keep the sensor aimed at the scene. The control panel's pts/frame metric and sparse warning catch this in real time.
