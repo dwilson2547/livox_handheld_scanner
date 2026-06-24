@@ -22,6 +22,9 @@ BMI055 and any external IMU are deliberately excluded — poor sync, no benefit.
 - **Odometry:** Point-LIO (point-by-point iEKF, handles aggressive hand motion)
 - **Meshing:** VDBFusion TSDF integrator (live incremental surface + offline dense replay)
 - **Colorization:** per-vertex D435i projection using calibrated `T_cam_lidar`
+- **Voxel color map (experimental):** probabilistic voxel map (log-odds occupancy +
+  robust per-voxel weighted-median color) that rejects rolling-shutter fliers and
+  mis-projections instead of last-write-wins. See `docs/VOXEL_COLOR_MAP.md`
 - **Point cloud:** `/cloud_registered` recorded during processing replay → LAS export
 - **Control panel:** browser UI at `:8090` for scan/process/colorize/Potree workflows
 - **Potree viewer:** octree point cloud browser at `:8087` (per-session, on demand)
@@ -73,8 +76,9 @@ src/scanner_bringup/     launch files, sensor configs
 src/scanner_control/     HTTP control server + browser UI
 src/scanner_coverage/    per-voxel observation density + LIO health node
 src/scanner_meshing/     VDBFusion TSDF wrapper node
-scripts/                 setup, calibration, Potree lifecycle, export tools
-docs/                    ARCHITECTURE.md, HANDOFF.md, SETUP.md
+scripts/                 setup, calibration, Potree lifecycle, export tools,
+                         static_projection_test.py / replay_to_cloud_bag.sh / build_voxel_map.py
+docs/                    ARCHITECTURE.md, HANDOFF.md, SETUP.md, VOXEL_COLOR_MAP.md
 ```
 
 ## Sessions
