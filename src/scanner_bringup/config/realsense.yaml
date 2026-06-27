@@ -13,5 +13,18 @@ publish_tf: true
 tf_publish_rate: 0.0
 rgb_camera.color_profile: "640,480,30"
 depth_module.depth_profile: "640,480,30"
+
+# --- Locked RGB exposure / white balance (voxel_color_map_pt_2.md §5) ----------
+# The robust per-voxel median rejects OUTLIERS; it cannot fix SYSTEMATIC color
+# drift. If auto-exposure/WB wander across a scan, every sample of a voxel is
+# consistently-but-wrongly colored and the median faithfully preserves the wrong
+# color → walls that shift hue while each voxel looks "confident". Lock both.
+#   TUNE the two values on-device per room (these are placeholders); at minimum
+#   keep WB locked. Param names follow realsense2_camera ROS 2 — verify against
+#   the installed driver version (`ros2 param list /camera/d435i`) before trusting.
+rgb_camera.enable_auto_exposure: false
+rgb_camera.exposure: 156          # µs — room-dependent; tune on next hardware session
+rgb_camera.enable_auto_white_balance: false
+rgb_camera.white_balance: 4600    # Kelvin — room-dependent; tune on next hardware session
 wait_for_device_timeout: 10.0
 reconnect_timeout: 6.0

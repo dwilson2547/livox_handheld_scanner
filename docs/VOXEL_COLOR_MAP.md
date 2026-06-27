@@ -23,7 +23,7 @@ The voxel map fixes this with three independent levers:
 
 | File | Role |
 |---|---|
-| `src/scanner_control/scanner_control/voxel_map.py` | ROS-free core: log-odds occupancy, Amanatides–Woo ray-clearing, weighted-median `ColorAccumulator`, view-angle/range/motion weights, PLY export |
+| `src/scanner_control/scanner_control/voxel_map.py` | ROS-free core: log-odds occupancy, Amanatides–Woo ray-clearing, best-N weighted-median `ColorAccumulator` (lowest-weight eviction), view-angle/range/motion weights, PLY export |
 | `src/scanner_control/test/test_voxel_map.py` | Unit tests for the core (no ROS/hardware needed) |
 | `src/scanner_control/scanner_control/voxel_build.py` | Bag adapter + color front-end (occupancy from `/cloud_registered`, per-keyframe projection, occlusion, weighting) |
 | `src/scanner_control/scanner_control/static_projection.py` | Calibration **gate**: project one LiDAR sweep through `T_cam_lidar` onto one RGB frame |
@@ -59,6 +59,37 @@ python3 scripts/build_voxel_map.py sessions/<name> --voxel-size 0.02 -i 0.2
 - `--l-occ-min` (default 0.85) — occupancy export threshold / **noise-floor knob**.
 - `--interval` — seconds between sampled RGB keyframes.
 - `--ray-clear` — enable per-ray miss integration (stronger denoise; slow in Python).
+
+## Part 2 refinements applied (2026-06-27)
+
+Implementing [`../voxel_color_map_pt_2.md`](../voxel_color_map_pt_2.md):
+
+- **§2 lowest-weight eviction (the flagship cheap upgrade).** `ColorAccumulator`
+  now keeps the *best-N* samples: on overflow it drops the lowest-weight retained
+  sample (and ignores an incoming sample that is worse than everything kept),
+  instead of evicting the oldest. A clean face-on early frame can no longer be
+  pushed out by a later grazing-angle / fast-pan one. Unit-tested
+  (`test_color_accumulator_keeps_highest_weight`).
+- **§1 ω from the trajectory, centered on the image stamp.** `_Trajectory.omega_at`
+  was already trajectory-derived (not raw IMU — correct for this rig); it now uses
+  a centered finite-difference `ω ≈ angle(R(t-h)ᵀR(t+h))/2h` around the image
+  timestamp rather than whichever two native poses happened to bracket it, making
+  the rolling-shutter weight robust to uneven native pose spacing.
+
+Still **deferred**: §3 vector median (only if mixed-color tint artifacts appear).
+**Open decisions** (not algorithm changes): §4 VDBFusion (this map is standalone,
+emits its own PLY — it does *not* run a second grid alongside VDBFusion, so the
+"two grids" trap is already avoided); §6 process-then-delete bag ops.
+
+### Capture checklist (pt_2 §5 — systematic color drift the median CANNOT fix)
+Lock the D435 RGB **exposure and white balance** before recording. The robust
+accumulator rejects *outliers*; it faithfully preserves a *consistent* wrong color
+if auto-exposure/WB drifts across the scan. The lock is **now scaffolded** in
+`src/scanner_bringup/config/realsense.yaml` (`rgb_camera.enable_auto_exposure: false`
++ `rgb_camera.exposure`, `rgb_camera.enable_auto_white_balance: false` +
+`rgb_camera.white_balance`). **Action remaining on next hardware session:** verify
+the param names against the installed `realsense2_camera` (`ros2 param list
+/camera/d435i`) and tune the two placeholder values to the room. At minimum lock WB.
 
 ## Status (2026-06-24)
 

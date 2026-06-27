@@ -50,7 +50,8 @@ class VoxelMapConfig:
                                       #   → this is the noise-floor knob (raise = stricter)
 
     # Color accumulation ----------------------------------------------------- #
-    color_reservoir: int = 64         # bounded sample buffer per voxel (Option A: median)
+    color_reservoir: int = 64         # bounded best-N sample buffer per voxel (median;
+                                      #   lowest-weight eviction — handoff pt_2 §2)
     n_min_color: int = 3              # min samples for a confident exported color
 
     # Per-sample color weights ---------------------------------------------- #
@@ -68,26 +69,36 @@ class ColorAccumulator:
     Bounded reservoir of weighted RGB samples; reports the per-channel weighted
     median. Robust to rolling-shutter fliers / reflections in a way a running
     mean is not (a single bad frame cannot drag the result).
+
+    Eviction keeps the *best-N* observations, not the most recent (handoff pt_2
+    §2). A voxel on a thorough scan is seen far more than `capacity` times, so on
+    overflow we drop the **lowest-weight** retained sample rather than the oldest
+    — otherwise a clean face-on early frame could be evicted in favour of a later
+    grazing-angle / fast-pan one, degrading the surviving set over the scan.
     """
 
-    __slots__ = ("_rgb", "_w", "_n", "_head", "_cap")
+    __slots__ = ("_rgb", "_w", "_n", "_cap")
 
     def __init__(self, capacity: int = 64):
         self._cap = capacity
         self._rgb = np.zeros((capacity, 3), dtype=np.float32)
         self._w = np.zeros(capacity, dtype=np.float32)
         self._n = 0          # number of valid samples (<= cap)
-        self._head = 0       # next write position (ring)
 
     def add(self, rgb, weight: float) -> None:
         if weight <= 0.0:
             return
-        i = self._head
-        self._rgb[i] = rgb
-        self._w[i] = weight
-        self._head = (i + 1) % self._cap
         if self._n < self._cap:
+            self._rgb[self._n] = rgb
+            self._w[self._n] = weight
             self._n += 1
+            return
+        # Full: replace the lowest-weight sample, but only if the incoming sample
+        # outranks it (otherwise it's worse than everything we kept → drop it).
+        j = int(np.argmin(self._w))
+        if weight > self._w[j]:
+            self._rgb[j] = rgb
+            self._w[j] = weight
 
     @property
     def sample_count(self) -> int:

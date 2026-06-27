@@ -132,14 +132,25 @@ class _Trajectory:
         out[:3, :3] = _slerp_rot(T0[:3, :3], T1[:3, :3], a)
         return out
 
-    def omega_at(self, ts: int) -> float:
-        """Angular speed magnitude (rad/s) from adjacent poses around ts."""
-        i = int(np.searchsorted(self.t, ts))
-        i = max(1, min(i, len(self.t) - 1))
-        dt = (self.t[i] - self.t[i - 1]) * 1e-9
+    def omega_at(self, ts: int, dt_s: float = 0.05) -> float:
+        """Angular speed magnitude (rad/s) from a *centered* finite-difference of
+        the interpolated trajectory rotation around ts (handoff pt_2 §1):
+        ω ≈ angle(R(t-h)ᵀ·R(t+h)) / 2h, with h = dt_s.
+
+        Sourced from the Point-LIO trajectory, NOT raw IMU — in this rig LiDAR
+        dominates the state estimate, so trajectory ω is the more trustworthy
+        signal. Centering on the image stamp (rather than picking the two native
+        poses that happen to bracket it) makes the rolling-shutter weight robust
+        to uneven / very fine native pose spacing."""
+        h = int(dt_s * 1e9)
+        t0 = max(int(self.t[0]), ts - h)
+        t1 = min(int(self.t[-1]), ts + h)
+        dt = (t1 - t0) * 1e-9
         if dt <= 0:
             return 0.0
-        dR = self.T[i][:3, :3].T @ self.T[i - 1][:3, :3]
+        R0 = self.pose_at(t0)[:3, :3]
+        R1 = self.pose_at(t1)[:3, :3]
+        dR = R0.T @ R1
         ang = np.arccos(np.clip((np.trace(dR) - 1.0) / 2.0, -1.0, 1.0))
         return float(ang / dt)
 

@@ -123,6 +123,23 @@ def test_color_reservoir_is_bounded():
     assert acc.sample_count == 8  # bounded memory regardless of input length
 
 
+def test_color_accumulator_keeps_highest_weight():
+    """pt_2 §2: on overflow, evict the lowest-weight sample (keep best-N), not the
+    oldest. A late burst of high-weight GREEN must displace early low-weight RED."""
+    acc = ColorAccumulator(capacity=8)
+    for _ in range(8):                                          # fill with weak red
+        acc.add(np.array([255, 0, 0], dtype=np.float32), 0.1)
+    for _ in range(8):                                          # overflow with strong green
+        acc.add(np.array([0, 255, 0], dtype=np.float32), 1.0)
+    assert acc.sample_count == 8
+    r = acc.result()
+    assert r[1] == 255 and r[0] == 0, "high-weight green should have evicted weak red"
+
+    # A sample worse than everything retained is dropped, not kept.
+    acc.add(np.array([0, 0, 255], dtype=np.float32), 0.001)
+    assert acc.result()[2] == 0, "below-floor sample must not enter the buffer"
+
+
 def test_add_color_only_on_existing_voxels():
     m = VoxelMap(VoxelMapConfig(voxel_size=0.02))
     pt = np.array([0.2, 0.2, 0.2])
