@@ -1,5 +1,7 @@
 # GL-SFT1200 Travel Router — Wireless WAN Setup (Scanner Rig)
 
+> Had to use this command to ssh in: ssh -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa root@192.168.8.1
+
 ## Goal
 Run the SFT1200 as a self-contained network for the 3D scanner rig:
 - **5 GHz radio (radio1 / wlan1):** STA / wireless WAN client → uplinks to home WiFi
