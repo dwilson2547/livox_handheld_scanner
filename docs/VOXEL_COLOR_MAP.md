@@ -108,19 +108,42 @@ if auto-exposure/WB drifts across the scan. The lock is **now scaffolded** in
 the param names against the installed `realsense2_camera` (`ros2 param list
 /camera/d435i`) and tune the two placeholder values to the room. At minimum lock WB.
 
-## Status (2026-06-24)
+## Status (2026-06-28)
 
-End-to-end validated on `viewer_fix_20260621_075144`: ~60 s replay + 92 s build,
+End-to-end validated on `viewer_fix_20260621_075144`: ~60 s replay + build,
 570 deskewed sweeps → 157 k voxels, colored from 271 keyframes. Result is a
 **color-coherent surface** — a clear improvement over the last-write-wins mesh —
-with residual blotches confined to grazing-angle boundary voxels. Core unit tests
-pass (ray-clearing rejects one-off noise, median resists fliers, DDA exact, clamps).
+with residual blotches confined to grazing-angle boundary voxels. **21 unit tests
+pass** (ray-clearing, robust median + vector medoid, PCA normals, columnar-store
+sorted-key invariant, min-hit gate, DDA exact, clamps).
 
-**Calibration:** the static-frame gate shows the extrinsic is approximately correct
-(scene-coherent, straight lines) with a small residual offset; the blotch was
-dominated by the temporal/outlier path, confirming the voxel map is the right fix.
-A proper target-based / `direct_visual_lidar_calibration` run is still pending (needs
-the rig connected). The session bags' `camera_info` carries no distortion coeffs.
+**Performance + denoise are done (2026-06-28).** `VoxelMap` is now a columnar store
+(int64-packed sorted keys + numpy log-odds/hit-count), so `--ray-clear` runs in
+minutes/session instead of ~40 min (the old per-voxel Python dict loop is gone), and
+two denoise knobs exist: `--min-hits N` (cheap flier gate) and `--ray-clear` (miss
+clearing, surface-only). Re-validated on real data: baseline reproduces the prior
+output **byte-for-byte**; `--min-hits 2` removes 57 % of voxels (single-hit fliers),
+`--ray-clear` removes 31 % (cleared ghosts); builds run 58–166 s on the 2.9 GB bag.
+
+**Color quality (2026-06-28):** view-angle weight now uses real **PCA surface
+normals** (`compute_normals`) instead of the crude centroid direction; `--vector-median`
+adds the weighted medoid for mixed-color voxels. Colored voxel maps are browsable via
+`bash scripts/potree.sh voxel <session>`.
+
+**Calibration (unchanged, hardware-gated):** the static-frame gate shows the extrinsic
+is approximately correct (scene-coherent, straight lines) with a small residual offset;
+the blotch was dominated by the temporal/outlier path, confirming the voxel map is the
+right fix. A proper target-based / `direct_visual_lidar_calibration` run is still pending
+(needs the rig connected). The session bags' `camera_info` carries no distortion coeffs.
+
+### Open / next (all hardware-gated — waiting on the rig)
+- **§5 RealSense exposure/WB lock** — scaffolded in `scanner_bringup/config/realsense.yaml`;
+  verify param names (`ros2 param list /camera/d435i`) and tune the placeholder values
+  to the room on the next capture. At minimum lock WB.
+- **Target-based extrinsic calibration** — `direct_visual_lidar_calibration` run to remove
+  the residual offset.
+- **Plane detection Stages 2+** — gravity-based ground/wall/ceiling classification and
+  plane extraction on top of the now-available PCA normals (`../plane_detection_handoff.md`).
 
 ## Known limitations / next steps
 
