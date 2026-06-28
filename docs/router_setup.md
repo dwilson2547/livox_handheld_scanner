@@ -107,3 +107,4 @@ ip addr show br-lan | grep inet
 ## Operational notes
 - 5 GHz is fully consumed by the uplink, so the hosted AP is **2.4 GHz only**. Fine for control/telemetry to the scanner; keep the OptiPlex on the wired LAN port for any bulk point-cloud transfer.
 - The `ifname` line is committed to `/etc/config/wireless` and survives reboot. If GL firmware regenerates wireless config (e.g. after a firmware update), re-check that `ifname='wlan1'` is still present — it's the first thing to break.
+- Lan client was configured to static dhcp lease by mac address, pretty easy from the web interface. Client will always be at ip 192.168.8.50
