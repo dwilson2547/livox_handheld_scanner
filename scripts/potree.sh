@@ -5,6 +5,8 @@
 #   potree.sh                   — show status and list sessions
 #   potree.sh start             — start viewer for the most recent session
 #   potree.sh start <name>      — start viewer for a named session (fuzzy match)
+#   potree.sh voxel [<name>]    — start viewer for the session's colored VOXEL MAP
+#                                 (build_voxel_map.py output) instead of the raw cloud
 #   potree.sh stop              — stop the running viewer
 #   potree.sh status            — show what's running
 #   potree.sh list              — list all sessions and their point cloud status
@@ -108,6 +110,47 @@ _ensure_converted() {
     echo "$potree"
 }
 
+# Convert a colored voxel-map PLY (build_voxel_map.py output) → colored LAS → Potree.
+# All human-readable output goes to stderr; only the potree dir is echoed to stdout.
+_ensure_voxel_converted() {
+    local session="$1"
+    local ply="$session/voxel_color_map.ply"
+    if [ ! -f "$ply" ]; then
+        ply=$(ls -t "$session"/voxel_*.ply 2>/dev/null | head -1 || true)
+    fi
+    if [ -z "$ply" ] || [ ! -f "$ply" ]; then
+        echo "No voxel map PLY in $(basename "$session")." >&2
+        echo "Build one first:" >&2
+        echo "  source ~/ros2_ws/install/setup.bash" >&2
+        echo "  python3 $REPO_ROOT/scripts/build_voxel_map.py $(basename "$session") [--ray-clear] [--min-hits 2]" >&2
+        exit 1
+    fi
+
+    local base las potree
+    base=$(basename "$ply" .ply)
+    las="$session/${base}.las"
+    potree="$session/potree_voxel"
+
+    if [ ! -f "$las" ] || [ "$ply" -nt "$las" ]; then
+        echo "Converting $(basename "$ply") → colored LAS …" >&2
+        python3 "$REPO_ROOT/scripts/voxel_ply_to_las.py" "$ply" -o "$las" >&2
+    fi
+
+    if [ ! -f "$potree/index.html" ] || [ "$las" -nt "$potree/index.html" ]; then
+        if [ ! -x "$CONVERTER" ]; then
+            echo "ERROR: PotreeConverter not found. Run: bash scripts/setup_potree.sh" >&2
+            exit 1
+        fi
+        rm -rf "$potree"
+        echo "Converting $(basename "$las") to Potree format …" >&2
+        LD_LIBRARY_PATH="$VENDOR" "$CONVERTER" "$las" -o "$potree" \
+            -p index --title "$(basename "$session") (voxel)" 2>&1 \
+            | grep -v "^WARN\|^#\|throughput\|duration\|output\|cubicAABB\|total file" >&2 \
+            || true
+    fi
+    echo "$potree"
+}
+
 # --------------------------------------------------------------------------- #
 #  commands
 # --------------------------------------------------------------------------- #
@@ -134,9 +177,11 @@ list)
         name=$(basename "${d%/}")
         has_las=""
         has_potree=""
+        has_voxel=""
         [ -f "$d/pointcloud.las" ]  && has_las=" [las]"
         [ -d "$d/potree" ]          && has_potree=" [potree]"
-        echo "  $name$has_las$has_potree"
+        ls "$d"/voxel_*.ply >/dev/null 2>&1 && has_voxel=" [voxel]"
+        echo "  $name$has_las$has_potree$has_voxel"
     done
     ;;
 
@@ -172,6 +217,39 @@ start)
     echo "To stop: bash scripts/potree.sh stop"
     ;;
 
+voxel)
+    # Like 'start' but serves the colored voxel map (build_voxel_map.py output)
+    # instead of the raw point cloud.
+    session=$(_resolve_session "${2:-}")
+    if [ -z "$session" ] || [ ! -d "$session" ]; then
+        echo "ERROR: no sessions found in $SESSIONS_DIR" >&2
+        exit 1
+    fi
+    echo "Session: $(basename "$session")  (voxel map)"
+
+    if _is_running; then
+        echo "Stopping existing server …"
+        _stop
+    fi
+
+    potree_dir=$(_ensure_voxel_converted "$session")
+
+    python3 -m http.server "$PORT" --directory "$potree_dir" \
+        > /tmp/potree_scanner.log 2>&1 &
+    echo $! > "$PID_FILE"
+    echo "$session" > "$SESSION_FILE"
+
+    sleep 1
+    if ! _is_running; then
+        echo "ERROR: server failed to start. Log:" >&2
+        cat /tmp/potree_scanner.log >&2
+        exit 1
+    fi
+
+    echo "Serving voxel map at http://localhost:$PORT  (PID $(cat "$PID_FILE"))"
+    echo "To stop: bash scripts/potree.sh stop"
+    ;;
+
 "")
     # No command: show status then list
     if _is_running; then
@@ -183,7 +261,8 @@ start)
     echo ""
     bash "$0" list
     echo ""
-    echo "Usage: bash scripts/potree.sh start [session-name]"
+    echo "Usage: bash scripts/potree.sh start [session-name]    (raw cloud)"
+    echo "       bash scripts/potree.sh voxel [session-name]    (colored voxel map)"
     ;;
 
 *)

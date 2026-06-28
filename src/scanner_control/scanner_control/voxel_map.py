@@ -57,6 +57,10 @@ class VoxelMapConfig:
     color_reservoir: int = 64         # bounded best-N sample buffer per voxel (median;
                                       #   lowest-weight eviction — handoff pt_2 §2)
     n_min_color: int = 3              # min samples for a confident exported color
+    color_vector_median: bool = False # handoff pt_2 §3: use the weighted vector medoid
+                                      #   (an actually-observed sample) instead of the
+                                      #   per-channel median, which on a mixed-color
+                                      #   voxel can output a triplet no sample had.
 
     # Per-sample color weights ---------------------------------------------- #
     view_angle_min_cos: float = 0.34  # drop samples grazing beyond ~70° (cos 70° ≈ 0.34)
@@ -108,16 +112,35 @@ class ColorAccumulator:
     def sample_count(self) -> int:
         return self._n
 
-    def result(self) -> np.ndarray:
-        """Per-channel weighted median as uint8 RGB. Zeros if empty."""
+    def result(self, vector_median: bool = False) -> np.ndarray:
+        """Robust per-voxel color as uint8 RGB. Zeros if empty.
+
+        Default is the per-channel weighted median (cheap, robust to fliers). With
+        ``vector_median`` it returns the weighted **medoid** — the retained sample
+        minimizing the weighted sum of distances to all others (handoff pt_2 §3).
+        The medoid is guaranteed to be a color that was actually observed, so it
+        cannot invent a hue on a mixed-color voxel the way independent per-channel
+        medians can."""
         if self._n == 0:
             return np.zeros(3, dtype=np.uint8)
         rgb = self._rgb[: self._n]
         w = self._w[: self._n]
+        if vector_median:
+            return _weighted_medoid(rgb, w)
         out = np.empty(3, dtype=np.uint8)
         for c in range(3):
             out[c] = _weighted_median(rgb[:, c], w)
         return out
+
+
+def _weighted_medoid(rgb: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    """Weighted vector medoid: the sample minimizing Σ_j w_j·‖rgb_i − rgb_j‖.
+    Returns an actually-observed color (never an invented per-channel mix). O(n²)
+    over the bounded reservoir (n ≤ capacity), evaluated only at export."""
+    diff = rgb[:, None, :] - rgb[None, :, :]          # (n, n, 3)
+    dist = np.sqrt((diff * diff).sum(axis=2))         # (n, n) pairwise distances
+    cost = dist @ weights                             # (n,) weighted distance sum
+    return rgb[int(np.argmin(cost))].astype(np.uint8)
 
 
 def _weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
@@ -405,6 +428,60 @@ class VoxelMap:
         for a, b, c in zip(kx, ky, kz):
             yield (int(a), int(b), int(c))
 
+    def compute_normals(self, radius: int = 2, min_neighbors: int = 6):
+        """Per-voxel PCA surface normals over the occupied set (plane_detection
+        handoff Stage 1). For each occupied voxel, gather occupied neighbours within
+        `radius` voxels and take the smallest-eigenvalue eigenvector of their center
+        covariance — the local plane normal. Computed on the *denoised* occupancy, so
+        far cleaner than per-frame raw normals.
+
+        Sign is left ambiguous (PCA gives an axis): downstream uses |cos|, which is
+        sign-free, so no orientation pass is needed. Voxels with fewer than
+        `min_neighbors` supporting neighbours are marked invalid (normal left zero).
+
+        Returns (normals (M,3) float64, valid (M,) bool), aligned to the iteration
+        order of occupied_keys() / export_points() so callers can index by position.
+        Fully vectorized: one searchsorted membership test per neighbour offset, then
+        a single batched eigh over all voxels — no per-voxel Python loop.
+        """
+        ids = self._keys[self._occupied_mask()]
+        n = len(ids)
+        normals = np.zeros((n, 3), dtype=np.float64)
+        valid = np.zeros(n, dtype=bool)
+        if n == 0:
+            return normals, valid
+
+        kx, ky, kz = _unpack_keys(ids)
+        base = np.column_stack([kx, ky, kz]).astype(np.int64)   # (n,3) int coords
+        s = self.cfg.voxel_size
+        centers = (base + 0.5) * s                               # (n,3) world centers
+
+        cnt = np.zeros(n, dtype=np.int64)
+        ssum = np.zeros((n, 3), dtype=np.float64)                # Σ neighbour center
+        souter = np.zeros((n, 3, 3), dtype=np.float64)           # Σ pᵀp (for covariance)
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                for dz in range(-radius, radius + 1):
+                    nid = _pack_keys(base + (dx, dy, dz))
+                    pos = np.minimum(np.searchsorted(ids, nid), n - 1)
+                    ok = ids[pos] == nid                         # neighbour occupied?
+                    if not ok.any():
+                        continue
+                    src = np.where(ok)[0]
+                    nb = centers[pos[ok]]                        # neighbour centers
+                    cnt[src] += 1
+                    ssum[src] += nb
+                    souter[src] += nb[:, :, None] * nb[:, None, :]
+
+        valid = cnt >= min_neighbors
+        if valid.any():
+            c = cnt[valid].astype(np.float64)
+            mean = ssum[valid] / c[:, None]
+            cov = souter[valid] / c[:, None, None] - mean[:, :, None] * mean[:, None, :]
+            _, vecs = np.linalg.eigh(cov)                        # ascending eigenvalues
+            normals[valid] = vecs[:, :, 0]                       # smallest-λ eigenvector
+        return normals, valid
+
     def export_points(self, with_color: bool = False):
         """
         Return (centers Nx3 float32, colors Nx3 uint8 | None) for occupied voxels.
@@ -424,11 +501,12 @@ class VoxelMap:
         if not with_color:
             return centers, None
         flag = np.array([255, 0, 255], dtype=np.uint8)
+        vec_med = self.cfg.color_vector_median
         colors = np.empty((len(ids), 3), dtype=np.uint8)
         for i in range(len(ids)):
             acc = self._color.get(int(ids[i]))
             if acc is not None and acc.sample_count >= self.cfg.n_min_color:
-                colors[i] = acc.result()
+                colors[i] = acc.result(vec_med)
             else:
                 colors[i] = flag
         return centers, colors

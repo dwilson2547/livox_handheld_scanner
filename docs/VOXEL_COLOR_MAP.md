@@ -63,6 +63,15 @@ python3 scripts/build_voxel_map.py sessions/<name> --voxel-size 0.02 -i 0.2
 - `--ray-clear` — enable miss-based clearing (stronger denoise). Vectorized columnar
   store + surface-only updates make it minutes/session, not ~40 min (see limitation 1).
   `clear_subsample` (default 4) trades sampling cost against completeness.
+- `--vector-median` — robust color via the weighted vector medoid instead of
+  per-channel medians (avoids invented hues on mixed-color voxels).
+
+### Viewing the colored voxel map
+The map exports a colored PLY (default `<session>/voxel_color_map.ply`). To browse it
+in Potree: `bash scripts/potree.sh voxel <session>` — converts PLY → colored LAS
+(`voxel_ply_to_las.py`, LAS point-format 2 / 16-bit RGB) → Potree octree and serves at
+`localhost:8087`. (PotreeConverter's PLY reader is unreliable; the LAS hop is why.) The
+raw point cloud still uses `potree.sh start <session>`.
 
 ## Part 2 refinements applied (2026-06-27)
 
@@ -80,7 +89,11 @@ Implementing [`../voxel_color_map_pt_2.md`](../voxel_color_map_pt_2.md):
   timestamp rather than whichever two native poses happened to bracket it, making
   the rolling-shutter weight robust to uneven native pose spacing.
 
-Still **deferred**: §3 vector median (only if mixed-color tint artifacts appear).
+**§3 vector median — implemented (2026-06-28).** `--vector-median` switches the
+per-voxel color from independent per-channel medians (which can output a hue no
+sample had on a mixed-color voxel) to the weighted **vector medoid** — the retained
+sample minimizing Σ wⱼ·‖rgbᵢ−rgbⱼ‖, guaranteed to be an actually-observed color.
+Off by default; flip it on if you see odd tints on high-contrast-edge voxels.
 **Open decisions** (not algorithm changes): §4 VDBFusion (this map is standalone,
 emits its own PLY — it does *not* run a second grid alongside VDBFusion, so the
 "two grids" trap is already avoided); §6 process-then-delete bag ops.
@@ -131,9 +144,14 @@ the rig connected). The session bags' `camera_info` carries no distortion coeffs
      ray *sampling*, tuned by `clear_subsample` (default 4 ≈ ~1.7 min/session; 1 =
      every ray ≈ ~7 min; quality is nearly flat in it). Net vs the old path: a usable
      full-session ray-clear in minutes instead of tens of minutes.
-2. **Surface normals are crude** (voxel→trajectory-centroid direction) for the
-   view-angle weight. Proper PCA normals arrive with plane detection
-   (`../plane_detection_handoff.md`).
+2. **Surface normals — now PCA (2026-06-28).** The view-angle weight previously used
+   a crude voxel→trajectory-centroid direction; it now uses real per-voxel **PCA
+   normals** (`VoxelMap.compute_normals`, plane_detection handoff Stage 1): the
+   smallest-eigenvalue eigenvector of each occupied voxel's occupied-neighbour
+   covariance, computed on the *denoised* occupancy and fully vectorized (one batched
+   `eigh`, no per-voxel loop). Sign-free (downstream uses |cos|). Voxels with too few
+   neighbours fall back to the old centroid direction. Stages 2+ of the handoff
+   (gravity-based ground/wall/ceiling classification, plane extraction) are still TODO.
 3. **Dim, low-contrast captures** with no distortion model — worth a fixed-exposure
    recapture and a real extrinsic calibration on the next hardware session.
 4. Color quality is gated on the calibration refinement above.

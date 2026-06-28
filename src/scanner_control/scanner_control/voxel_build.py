@@ -305,9 +305,13 @@ def _colorize_voxels(
         return
     centers = np.array([vm.center_of(k) for k in occ_keys], dtype=np.float64)  # (M,3) world
     centers_h = np.hstack([centers, np.ones((len(centers), 1))]).T             # (4,M)
-    # crude surface normal per voxel = direction toward the trajectory centroid
-    # (good enough for the view-angle weight; PCA normals come with plane detection).
+    # Per-voxel PCA surface normals from the denoised occupancy (aligned to occ_keys).
+    # Where a voxel has too few neighbours for a stable normal, fall back to the old
+    # crude "direction toward the trajectory centroid" so the view-angle weight is
+    # always defined.
+    normals, n_valid = vm.compute_normals()
     traj_centroid = np.mean([T[:3, 3] for T in traj.T], axis=0)
+    log(f"  PCA normals: {int(n_valid.sum())}/{len(occ_keys)} voxels have a stable normal")
 
     log(f"Coloring {len(occ_keys)} occupied voxels from RGB keyframes "
         f"(every {keyframe_interval}s) …")
@@ -369,8 +373,9 @@ def _colorize_voxels(
         rgb = img[kvi, kui]  # (K,3)
         for j, vox_i in enumerate(kidx):
             key = occ_keys[vox_i]
-            # view-angle weight via crude normal (voxel→trajectory direction)
-            n = centers[vox_i] - traj_centroid
+            # view-angle weight: PCA surface normal where stable, else fall back to
+            # the crude voxel→trajectory-centroid direction.
+            n = normals[vox_i] if n_valid[vox_i] else (centers[vox_i] - traj_centroid)
             ray = centers[vox_i] - cam_pos
             w_view = _abs_cos(n, ray, vm.cfg.view_angle_min_cos)
             w = w_motion * w_view * range_weight(float(kzv[j]), vm.cfg.range_falloff)

@@ -184,6 +184,31 @@ def test_new_voxel_insertion_keeps_keys_sorted():
     assert m.get(m.key_of([1.2, -0.7, 0.4])).hit_count == 1
 
 
+def test_pca_normals_on_planar_patch():
+    """A flat horizontal patch of occupied voxels (z constant) must yield normals
+    along ±z; sparse/edge voxels with too few neighbours are marked invalid."""
+    cfg = VoxelMapConfig(voxel_size=0.02)
+    m = VoxelMap(cfg)
+    # 9x9 patch in the z=0 plane (all at the same z voxel layer)
+    pts = []
+    for i in range(9):
+        for k in range(9):
+            pts.append([i * 0.02 + 0.001, k * 0.02 + 0.001, 0.001])
+    m.integrate_hits_batch(np.array(pts))
+    normals, valid = m.compute_normals(radius=2, min_neighbors=6)
+    assert valid.any()
+    # every stable normal is (anti)parallel to z: |nz| ≈ 1, |nx|,|ny| ≈ 0
+    nz = np.abs(normals[valid][:, 2])
+    assert np.all(nz > 0.95)
+    assert np.all(np.abs(normals[valid][:, :2]) < 0.2)
+
+
+def test_pca_normals_empty_map():
+    m = VoxelMap(VoxelMapConfig(voxel_size=0.02))
+    normals, valid = m.compute_normals()
+    assert normals.shape == (0, 3) and valid.shape == (0,)
+
+
 def test_log_odds_clamped():
     cfg = VoxelMapConfig(voxel_size=0.02)
     m = VoxelMap(cfg)
@@ -213,6 +238,34 @@ def test_color_accumulator_median_vs_mean():
     # median stays on the clean green; a running mean would be dragged toward red.
     assert r[1] == 200 and r[0] == 10 and r[2] == 10
     assert acc.sample_count == 21
+
+
+def test_vector_median_returns_real_color():
+    """pt_2 §3: per-channel median can invent a color no sample had; the vector
+    medoid cannot. Three orthogonal primaries → per-channel median is black (0,0,0),
+    which was never observed, while the medoid returns one of the actual samples."""
+    acc = ColorAccumulator(capacity=8)
+    samples = [np.array([255, 0, 0], dtype=np.float32),
+               np.array([0, 255, 0], dtype=np.float32),
+               np.array([0, 0, 255], dtype=np.float32)]
+    for s in samples:
+        acc.add(s, 1.0)
+
+    per_channel = acc.result()                       # independent R,G,B medians
+    assert tuple(per_channel) == (0, 0, 0)           # invented: no sample is black
+
+    medoid = acc.result(vector_median=True)
+    assert any(np.array_equal(medoid, s.astype(np.uint8)) for s in samples)
+
+
+def test_vector_median_follows_weight():
+    """The medoid is weighted: a heavily-weighted sample wins as the representative."""
+    acc = ColorAccumulator(capacity=8)
+    for _ in range(2):
+        acc.add(np.array([200, 10, 10], dtype=np.float32), 0.2)   # weak reds
+    acc.add(np.array([10, 10, 200], dtype=np.float32), 5.0)       # one strong blue
+    # weighted distances pull the medoid toward the high-weight blue cluster
+    assert tuple(acc.result(vector_median=True)) == (10, 10, 200)
 
 
 def test_color_reservoir_is_bounded():

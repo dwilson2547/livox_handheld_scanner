@@ -19,6 +19,8 @@ Then:
   --l-occ-min          occupancy export threshold / noise knob (default 0.85)
   --min-hits           export gate: drop voxels hit < N times (cheap flier denoise)
   --ray-clear          enable vectorized miss integration (stronger denoise)
+  --vector-median      use the weighted vector medoid for color (handoff pt_2 §3;
+                       avoids invented hues on mixed-color voxels)
 """
 
 import argparse
@@ -48,6 +50,7 @@ def main():
     ap.add_argument("--l-occ-min", type=float, default=0.85)
     ap.add_argument("--min-hits", type=int, default=1)
     ap.add_argument("--ray-clear", action="store_true")
+    ap.add_argument("--vector-median", action="store_true")
     args = ap.parse_args()
 
     session = Path(args.session_dir).expanduser().resolve()
@@ -69,7 +72,8 @@ def main():
     out_path = Path(args.out).expanduser().resolve() if args.out else session / "voxel_color_map.ply"
 
     cfg = VoxelMapConfig(
-        voxel_size=args.voxel_size, l_occ_min=args.l_occ_min, n_min_hits=args.min_hits
+        voxel_size=args.voxel_size, l_occ_min=args.l_occ_min, n_min_hits=args.min_hits,
+        color_vector_median=args.vector_median,
     )
 
     try:
