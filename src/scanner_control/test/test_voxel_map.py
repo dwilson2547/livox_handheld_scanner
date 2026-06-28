@@ -85,6 +85,105 @@ def test_ray_clearing_rejects_one_off_noise():
     assert noise_key not in occ
 
 
+def test_misses_batch_matches_per_ray_voxels():
+    """With geometry already present, the vectorized ray-march must leave the map in
+    the same state as the exact per-ray traversal. Both clear only existing voxels
+    (insert_new=False), so we seed every voxel on the ray path with a hit first."""
+    cfg = VoxelMapConfig(voxel_size=0.02)
+    origin = np.array([0.001, 0.001, 0.001])
+    endpoint = np.array([0.199, 0.001, 0.001])
+    path = list(_voxel_traversal(origin, endpoint, cfg.voxel_size))
+    seed = np.array([VoxelMap(cfg).center_of(k) for k in path])
+
+    exact = VoxelMap(cfg)
+    exact.integrate_hits_batch(seed)
+    exact.integrate_ray(origin, endpoint)            # misses along ray + hit at end
+
+    batch = VoxelMap(cfg)
+    batch.integrate_hits_batch(seed)
+    batch.integrate_misses_batch(origin, endpoint.reshape(1, 3))
+    batch.integrate_hits_batch(endpoint.reshape(1, 3))
+
+    ed = {k: round(v.log_odds, 6) for k, v in exact.iter_voxels()}
+    bd = {k: round(v.log_odds, 6) for k, v in batch.iter_voxels()}
+    assert ed == bd                                  # identical final state
+
+
+def test_misses_batch_folds_count_with_clamp():
+    """N rays through an existing voxel apply N misses in one folded, clamped update."""
+    cfg = VoxelMapConfig(voxel_size=0.02)
+    origin = np.array([0.0, 0.0, 0.0])
+    endpoints = np.repeat(np.array([[0.40, 0.0, 0.0]]), 5, axis=0)  # 5 identical rays
+    m = VoxelMap(cfg)
+    mid_pt = np.array([0.10, 0.0, 0.0])              # a voxel all 5 rays cross
+    m.integrate_hits_batch(mid_pt.reshape(1, 3))     # seed it so misses have a target
+    m.integrate_misses_batch(origin, endpoints)
+    mid = m.key_of(mid_pt)
+    expected = max(cfg.l_hit + 5 * cfg.l_miss, cfg.l_min)
+    assert abs(m.get(mid).log_odds - expected) < 1e-6
+
+
+def test_misses_skip_never_hit_voxels():
+    """Clearing must not create free-space voxels (insert_new=False) — otherwise the
+    map balloons to the whole scanned volume for voxels that can never be exported."""
+    m = VoxelMap(VoxelMapConfig(voxel_size=0.02))
+    m.integrate_misses_batch(np.zeros(3), np.array([[0.40, 0.0, 0.0]]))
+    assert len(m) == 0                               # nothing existed → nothing stored
+
+
+def test_ray_clearing_rejects_noise_via_batch():
+    """Same claim as the per-ray test, through the fast batch path: a one-off flier
+    that later rays pass through is driven below threshold; the wall persists."""
+    cfg = VoxelMapConfig(voxel_size=0.02)
+    m = VoxelMap(cfg)
+    origin = np.array([0.0, 0.0, 0.0])
+    noise_pt = np.array([0.10, 0.0, 0.0])
+    wall_pt = np.array([0.40, 0.0, 0.0])
+
+    # one spurious hit, then 30 sweeps to the real wall (misses clear, hit persists)
+    m.integrate_hits_batch(noise_pt.reshape(1, 3))
+    assert m.get(m.key_of(noise_pt)).log_odds > 0
+    walls = np.repeat(wall_pt.reshape(1, 3), 30, axis=0)
+    m.integrate_misses_batch(origin, walls)
+    m.integrate_hits_batch(walls)
+
+    assert m.get(m.key_of(noise_pt)).log_odds < cfg.l_occ_min
+    assert m.get(m.key_of(wall_pt)).log_odds >= cfg.l_occ_min
+
+
+def test_min_hit_gate_rejects_single_hit_fliers():
+    """The cheap denoise: with n_min_hits=2, a voxel hit once (a one-off flier) is
+    excluded from export even though its log-odds clears the occupancy threshold,
+    while a voxel hit twice survives."""
+    cfg = VoxelMapConfig(voxel_size=0.02, n_min_hits=2)
+    m = VoxelMap(cfg)
+    flier = np.array([0.10, 0.0, 0.0])
+    real = np.array([0.40, 0.0, 0.0])
+    m.integrate_hits_batch(flier.reshape(1, 3))       # one hit
+    m.integrate_hits_batch(np.repeat(real.reshape(1, 3), 2, axis=0))  # two hits
+    # both clear the log-odds threshold...
+    assert m.get(m.key_of(flier)).log_odds >= cfg.l_occ_min
+    assert m.get(m.key_of(real)).log_odds >= cfg.l_occ_min
+    # ...but only the twice-hit voxel passes the hit-count gate on export.
+    centers, _ = m.export_points()
+    occ = {m.key_of(c) for c in centers}
+    assert m.key_of(real) in occ
+    assert m.key_of(flier) not in occ
+
+
+def test_new_voxel_insertion_keeps_keys_sorted():
+    """Columnar invariant: _keys stays sorted through interleaved inserts so
+    searchsorted lookups remain correct."""
+    m = VoxelMap(VoxelMapConfig(voxel_size=0.02))
+    pts = np.array([[0.5, 0.5, 0.5], [-0.3, 0.1, 0.0], [0.5, 0.5, 0.5],
+                    [1.2, -0.7, 0.4], [-0.3, 0.1, 0.0]])
+    m.integrate_hits_batch(pts)
+    assert np.all(np.diff(m._keys) > 0)               # strictly increasing → sorted & unique
+    # each distinct point is retrievable with the right hit count
+    assert m.get(m.key_of([0.5, 0.5, 0.5])).hit_count == 2
+    assert m.get(m.key_of([1.2, -0.7, 0.4])).hit_count == 1
+
+
 def test_log_odds_clamped():
     cfg = VoxelMapConfig(voxel_size=0.02)
     m = VoxelMap(cfg)

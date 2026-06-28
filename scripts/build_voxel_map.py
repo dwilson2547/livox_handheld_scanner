@@ -17,7 +17,8 @@ Then:
   --voxel-size         metres (default 0.02)
   --interval / -i      RGB keyframe interval seconds (default 0.2)
   --l-occ-min          occupancy export threshold / noise knob (default 0.85)
-  --ray-clear          enable per-ray miss integration (slow; stronger denoise)
+  --min-hits           export gate: drop voxels hit < N times (cheap flier denoise)
+  --ray-clear          enable vectorized miss integration (stronger denoise)
 """
 
 import argparse
@@ -45,6 +46,7 @@ def main():
     ap.add_argument("--voxel-size", type=float, default=0.02)
     ap.add_argument("--interval", "-i", type=float, default=0.2)
     ap.add_argument("--l-occ-min", type=float, default=0.85)
+    ap.add_argument("--min-hits", type=int, default=1)
     ap.add_argument("--ray-clear", action="store_true")
     args = ap.parse_args()
 
@@ -66,7 +68,9 @@ def main():
     T_cam_lidar = load_calibration(calib_path)
     out_path = Path(args.out).expanduser().resolve() if args.out else session / "voxel_color_map.ply"
 
-    cfg = VoxelMapConfig(voxel_size=args.voxel_size, l_occ_min=args.l_occ_min)
+    cfg = VoxelMapConfig(
+        voxel_size=args.voxel_size, l_occ_min=args.l_occ_min, n_min_hits=args.min_hits
+    )
 
     try:
         vm = build_voxel_map(

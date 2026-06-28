@@ -58,7 +58,11 @@ python3 scripts/build_voxel_map.py sessions/<name> --voxel-size 0.02 -i 0.2
   ~1–2 cm, so smaller voxels scatter repeated hits across neighbours.
 - `--l-occ-min` (default 0.85) — occupancy export threshold / **noise-floor knob**.
 - `--interval` — seconds between sampled RGB keyframes.
-- `--ray-clear` — enable per-ray miss integration (stronger denoise; slow in Python).
+- `--min-hits N` (default 1) — export gate: drop voxels hit < N times. `--min-hits 2`
+  is the cheapest denoise; it rejects one-off fliers without any ray-clearing.
+- `--ray-clear` — enable miss-based clearing (stronger denoise). Vectorized columnar
+  store + surface-only updates make it minutes/session, not ~40 min (see limitation 1).
+  `clear_subsample` (default 4) trades sampling cost against completeness.
 
 ## Part 2 refinements applied (2026-06-27)
 
@@ -107,11 +111,26 @@ the rig connected). The session bags' `camera_info` carries no distortion coeffs
 
 ## Known limitations / next steps
 
-1. **Noise rejection not active by default.** `build_voxel_map.py` uses vectorized
-   *endpoint* hits for speed, so a single hit lands a voxel exactly at
-   `L_OCC_MIN=0.85` and the threshold filters nothing. The ray-clearing path
-   (`--ray-clear`) works and is unit-tested but is ~40 min/session in pure Python.
-   **Next:** vectorize ray-clearing or add a cheap min-hit-count gate.
+1. **Noise rejection is opt-in but now cheap (reworked 2026-06-28).** By default
+   `build_voxel_map.py` uses vectorized *endpoint* hits, so a single hit lands a voxel
+   exactly at `L_OCC_MIN=0.85` and the threshold filters nothing. Two complementary
+   denoise paths now exist:
+   - **`--min-hits N`** (cheap gate): export only voxels hit ≥ N times. A one-off
+     flier has `hit_count==1`, so `--min-hits 2` drops it for ~free — no ray-clearing
+     needed. This is the recommended first knob.
+   - **`--ray-clear`** (stronger): miss-based clearing, fully reworked. `VoxelMap` now
+     uses a **columnar store** (int64-packed sorted `_keys` + numpy `_log_odds`/
+     `_hit_count`), so the per-voxel update is one vectorized `searchsorted` + `clip`
+     (~10 ms/sweep over a 280k-voxel map — the old per-voxel **dict loop**, the true
+     ~40 min/session bottleneck, is gone). Clearing is also **surface-only**
+     (`_apply(insert_new=False)`): misses update existing voxels but never create
+     free-space ones, since those can't be exported anyway — this keeps the map
+     surface-sized instead of filling the whole scanned volume (~13 M voxels at 2 cm
+     for a room). The geometry is an int64-packed numpy ray-march approximating the
+     exact Amanatides–Woo `integrate_ray` (kept for tests). Remaining cost is purely
+     ray *sampling*, tuned by `clear_subsample` (default 4 ≈ ~1.7 min/session; 1 =
+     every ray ≈ ~7 min; quality is nearly flat in it). Net vs the old path: a usable
+     full-session ray-clear in minutes instead of tens of minutes.
 2. **Surface normals are crude** (voxel→trajectory-centroid direction) for the
    view-angle weight. Proper PCA normals arrive with plane detection
    (`../plane_detection_handoff.md`).

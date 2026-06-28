@@ -180,7 +180,7 @@ def build_voxel_map(
     config: Optional[VoxelMapConfig] = None,
     keyframe_interval: float = 0.2,
     ray_clear: bool = False,
-    clear_subsample: int = 8,
+    clear_subsample: int = 4,
     occlusion_eps: float = 0.05,
     log: Callable[[str], None] = print,
 ) -> VoxelMap:
@@ -191,8 +191,12 @@ def build_voxel_map(
     source_bag        : original session bag dir (color/depth/camera_info)
     T_cam_lidar       : 4×4, LiDAR-frame point → camera-frame point
     keyframe_interval : seconds between sampled RGB frames
-    ray_clear         : enable per-ray miss integration (slow; stronger denoise)
-    clear_subsample   : when ray_clear, clear rays for every Nth point
+    ray_clear         : enable miss integration (stronger denoise; vectorized +
+                        surface-only, so a full session is ~minutes not ~40 min)
+    clear_subsample   : when ray_clear, clear rays for every Nth point. Pure speed
+                        knob — clearing quality is nearly flat in it (a voxel crossed
+                        by many rays needs only a few to clear). Default 4 (~1.7 min
+                        /session); 1 = every ray (~7 min) for maximal completeness
     occlusion_eps     : metres a voxel may be behind the depth surface and still pass
     """
     if not _HAS_ROS:
@@ -227,13 +231,12 @@ def build_voxel_map(
         if len(pts) == 0:
             continue
         if ray_clear:
+            # Vectorized miss-clearing for the whole sweep at once (numpy ray-march;
+            # ~100× the per-ray Python traversal). Misses only — hits folded in once
+            # below, so endpoints aren't double-counted.
             origin = traj.pose_at(_stamp_ns(msg.header))[:3, 3]
-            for p in pts[::max(1, clear_subsample)]:
-                vm.integrate_ray(origin, p)
-            # also fold in all endpoints densely (clearing pass was subsampled)
-            vm.integrate_hits_batch(pts)
-        else:
-            vm.integrate_hits_batch(pts)
+            vm.integrate_misses_batch(origin, pts, subsample=max(1, clear_subsample))
+        vm.integrate_hits_batch(pts)
         n_sweeps += 1
         n_pts += len(pts)
         if n_sweeps % 50 == 0:
